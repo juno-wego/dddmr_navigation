@@ -1,0 +1,39 @@
+<launch>
+  <arg name="ip_address" default="192.168.11.1" />
+  <arg name="raw_ladar_data" default="false" />
+
+  <node pkg="slamware_ros_sdk" exec="slamware_ros_sdk_server_node" name="slamware_ros_sdk_server_node" output="both">
+
+  <param name="ip_address"               value="$(var ip_address)"/>
+  <param name="angle_compensate"         value="true"/>
+
+  <param name="map_frame"                value="aurora_odom"/>
+  <param name="robot_frame"              value="aurora_base"/>
+  <param name="odom_frame"               value="aurora_odom"/>
+  <param name="laser_frame"              value="aurora_laser"/>
+  <param name="imu_frame"                value ="aurora_imu_link"/>
+  <param name="camera_left"              value ="aurora_camera_left"/>
+  <param name="camera_right"             value ="aurora_camera_right"/>
+
+  <param name="robot_pose_pub_period"    value="0.01"/>
+  <!-- <param name="scan_pub_period"          value="0.1"/> -->
+  <param name="odometry_pub_period"          value="0.01"/>
+  <param name="map_pub_period"           value="0.2"/>
+  <param name="imu_raw_data_period"      value="0.005"/>
+
+  <param name= "ladar_data_clockwise"    value= "true"/>
+  <param name = "robot_pose_topic"            value = "aurora_robot_pose"/>
+  
+  <!-- topic remap /-->
+  <remap from="scan"                       to="scan"/>
+  <remap from="odom"                       to="odom"/>
+  <remap from="map"                        to="slamware_map"/>
+  <remap from="map_metadata"               to="map_metadata"/>
+  </node>
+
+  <!-- <node pkg="tf2_ros" exec="static_transform_publisher" name="odom2map" args="0 0 0 0 0 0 1 slamware_map aurora_odom"/> -->
+  <node pkg="tf2_ros" exec="static_transform_publisher" name="auroralaser2base" args="0 0 0.0315 0 0 0 1 aurora_base aurora_laser"/>
+  <node pkg="tf2_ros" exec="static_transform_publisher" name="auroraleftcam2base" args="0.0418 0.03 0 -0.5 0.5 -0.5 0.5 aurora_base aurora_camera_left"/>
+  <node pkg="tf2_ros" exec="static_transform_publisher" name="aurorarightcam2Leftcam" args="0.06 0 0 0 0 0 1 aurora_camera_left aurora_camera_right"/>
+  <node pkg="tf2_ros" exec="static_transform_publisher" name="auroraimu2Leftcam" args="0.03 0 0 0 0 -0.7071068 0.7071068 aurora_camera_left aurora_imu_link"/>
+</launch>
