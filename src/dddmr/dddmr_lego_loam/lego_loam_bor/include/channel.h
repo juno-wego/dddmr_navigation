@@ -4,6 +4,9 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include <chrono>
+
+#include "rclcpp/rclcpp.hpp"
 
 // Simplistic mechanism to move information from one thread to another in a thread-safe way.
 // Sender will wake up the receiver.
@@ -45,12 +48,21 @@ template<class T> class Channel {
 
   // Move an item out of the channel.
   // Block if empty
-  void receive(T &item) {
+  bool receive(T &item) {
     std::unique_lock<std::mutex> lock(_m);
-    _cv.wait(lock, [&](){ return !_empty; });
+    while (_empty) {
+      if (_cv.wait_for(lock, std::chrono::milliseconds(100), [&](){ return !_empty; })) {
+        break;
+      }
+
+      if (!rclcpp::ok()) {
+        return false;
+      }
+    }
     item = std::move(_item);
     _empty = true;
     _cv.notify_all();
+    return true;
   }
 
 };

@@ -277,6 +277,7 @@ namespace slamware_ros_sdk {
         // Depth camera publishers
         rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pubDepthImage_;
         rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pubDepthColorized_;
+        rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubDepthPointCloud_;
         
         // Semantic segmentation publishers
         rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pubSemanticSegmentation_;

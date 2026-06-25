@@ -91,6 +91,7 @@ class State{
     bool use_twist_stamped_;
     
     bool use_position_control_at_goal_;
+    bool use_recovery_behaviors_;
     std::string main_trajectory_generator_;
 
   private:

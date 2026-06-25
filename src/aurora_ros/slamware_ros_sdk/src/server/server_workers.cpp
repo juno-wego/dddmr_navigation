@@ -1,10 +1,13 @@
 #include "server_workers.h"
 #include "slamware_ros_sdk_server.h"
 #include <cassert>
+#include <cmath>
+#include <cstring>
 #include <limits>
 #include <random>
 #include <opencv2/opencv.hpp>
 #include <cv_bridge/cv_bridge.h>
+#include <sensor_msgs/msg/point_field.hpp>
 using namespace rp::standalone::aurora;
 namespace slamware_ros_sdk {
 
@@ -1275,6 +1278,7 @@ namespace slamware_ros_sdk {
         // Initialize depth camera publishers
         pubDepthImage_ = nhRos->create_publisher<sensor_msgs::msg::Image>(srvParams.getParameter<std::string>("depth_image_raw_topic_name"), 1);
         pubDepthColorized_ = nhRos->create_publisher<sensor_msgs::msg::Image>(srvParams.getParameter<std::string>("depth_image_colorized_topic_name"), 1);
+        pubDepthPointCloud_ = nhRos->create_publisher<sensor_msgs::msg::PointCloud2>(srvParams.getParameter<std::string>("depth_point_cloud_topic_name"), 1);
                 
         // Initialize semantic segmentation publishers
         pubSemanticSegmentation_ = nhRos->create_publisher<sensor_msgs::msg::Image>(srvParams.getParameter<std::string>("semantic_segmentation_topic_name"), 1);
@@ -1350,7 +1354,7 @@ namespace slamware_ros_sdk {
         auto currentTime = rclcpp::Clock().now();
         std_msgs::msg::Header header;
         header.stamp = currentTime;
-        header.frame_id = "camera_depth_optical_frame";
+        header.frame_id = serverParams().getParameter<std::string>("camera_left");
 
         // Process depth camera data
         if (depthCameraSupported_) {
@@ -1397,6 +1401,66 @@ namespace slamware_ros_sdk {
         
         cv_bridge::CvImage depthColorizedBridge(header, sensor_msgs::image_encodings::BGR8, depthColorized);
         pubDepthColorized_->publish(*depthColorizedBridge.toImageMsg());
+
+        if (pubDepthPointCloud_->get_subscription_count() == 0) {
+            return;
+        }
+
+        RemoteEnhancedImagingFrame pointFrame;
+        if (!auroraSDK->enhancedImaging.peekDepthCameraFrame(pointFrame, SLAMTEC_AURORA_SDK_DEPTHCAM_FRAME_TYPE_POINT3D)) {
+            return;
+        }
+
+        const auto* points = pointFrame.image.toPoint3D();
+        if (!points) {
+            return;
+        }
+
+        sensor_msgs::msg::PointCloud2 cloudMsg;
+        cloudMsg.header = header;
+        cloudMsg.height = 1;
+        cloudMsg.is_bigendian = false;
+        cloudMsg.is_dense = false;
+        cloudMsg.point_step = 12;
+
+        cloudMsg.fields.resize(3);
+        cloudMsg.fields[0].name = "x";
+        cloudMsg.fields[0].offset = 0;
+        cloudMsg.fields[0].datatype = sensor_msgs::msg::PointField::FLOAT32;
+        cloudMsg.fields[0].count = 1;
+        cloudMsg.fields[1].name = "y";
+        cloudMsg.fields[1].offset = 4;
+        cloudMsg.fields[1].datatype = sensor_msgs::msg::PointField::FLOAT32;
+        cloudMsg.fields[1].count = 1;
+        cloudMsg.fields[2].name = "z";
+        cloudMsg.fields[2].offset = 8;
+        cloudMsg.fields[2].datatype = sensor_msgs::msg::PointField::FLOAT32;
+        cloudMsg.fields[2].count = 1;
+
+        const auto pointCount = pointFrame.image.getPointCount();
+        cloudMsg.data.reserve(pointCount * cloudMsg.point_step);
+
+        for (size_t i = 0; i < pointCount; ++i) {
+            const float x = points[i][0];
+            const float y = points[i][1];
+            const float z = points[i][2];
+            if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) {
+                continue;
+            }
+            if (x == 0.0f && y == 0.0f && z == 0.0f) {
+                continue;
+            }
+
+            const auto offset = cloudMsg.data.size();
+            cloudMsg.data.resize(offset + cloudMsg.point_step);
+            std::memcpy(&cloudMsg.data[offset], &x, sizeof(float));
+            std::memcpy(&cloudMsg.data[offset + 4], &y, sizeof(float));
+            std::memcpy(&cloudMsg.data[offset + 8], &z, sizeof(float));
+        }
+
+        cloudMsg.width = static_cast<uint32_t>(cloudMsg.data.size() / cloudMsg.point_step);
+        cloudMsg.row_step = cloudMsg.width * cloudMsg.point_step;
+        pubDepthPointCloud_->publish(cloudMsg);
     }
 
     void ServerEnhancedImagingWorker::processSemanticSegmentation(const std_msgs::msg::Header& header)

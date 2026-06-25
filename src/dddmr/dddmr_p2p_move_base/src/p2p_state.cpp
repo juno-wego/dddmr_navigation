@@ -50,8 +50,8 @@ State::State(const rclcpp::node_interfaces::NodeLoggingInterface::SharedPtr& m_l
   //Controlling related
   parameter_->declare_parameter("oscillation_distance", rclcpp::ParameterValue(10.0));
   rclcpp::Parameter oscillation_distance = parameter_->get_parameter("oscillation_distance");
-  oscillation_angle_ = oscillation_distance.as_double();
-  RCLCPP_INFO(logger_->get_logger(), "oscillation_distance: %.2f", oscillation_angle_);  
+  oscillation_distance_ = oscillation_distance.as_double();
+  RCLCPP_INFO(logger_->get_logger(), "oscillation_distance: %.2f", oscillation_distance_);  
 
   parameter_->declare_parameter("oscillation_angle", rclcpp::ParameterValue(0.5));
   rclcpp::Parameter oscillation_angle = parameter_->get_parameter("oscillation_angle");
@@ -92,6 +92,11 @@ State::State(const rclcpp::node_interfaces::NodeLoggingInterface::SharedPtr& m_l
   rclcpp::Parameter use_position_control_at_goal = parameter_->get_parameter("use_position_control_at_goal");
   use_position_control_at_goal_ = use_position_control_at_goal.as_bool();
   RCLCPP_INFO(logger_->get_logger(), "use_position_control_at_goal: %d", use_position_control_at_goal_); 
+
+  parameter_->declare_parameter("use_recovery_behaviors", rclcpp::ParameterValue(true));
+  rclcpp::Parameter use_recovery_behaviors = parameter_->get_parameter("use_recovery_behaviors");
+  use_recovery_behaviors_ = use_recovery_behaviors.as_bool();
+  RCLCPP_INFO(logger_->get_logger(), "use_recovery_behaviors: %d", use_recovery_behaviors_);
 
   parameter_->declare_parameter("main_trajectory_generator", rclcpp::ParameterValue("differential_drive_simple"));
   rclcpp::Parameter main_trajectory_generator = parameter_->get_parameter("main_trajectory_generator");

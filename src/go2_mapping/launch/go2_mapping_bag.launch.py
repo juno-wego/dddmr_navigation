@@ -5,7 +5,6 @@ import yaml
 from ament_index_python.packages import get_package_share_path
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
-from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -14,6 +13,7 @@ def build_bag_launch(context, *args, **kwargs):
     lidar_source = LaunchConfiguration("lidar_source").perform(context)
     odom_source = LaunchConfiguration("odom_source").perform(context)
     bag_file_dir = LaunchConfiguration("bag_file_dir").perform(context)
+    show_rviz = LaunchConfiguration("show_rviz").perform(context).lower() == "true"
 
     package_share = get_package_share_path("go2_mapping")
     lego_loam_share = get_package_share_path("lego_loam_bor")
@@ -46,23 +46,27 @@ def build_bag_launch(context, *args, **kwargs):
 
     rviz_config = lego_loam_share / "rviz" / "lego_loam.rviz"
 
-    return [
+    nodes = [
         Node(
             package="lego_loam_bor",
             executable="lego_loam_bag",
-            name="lego_loam_bag",
             output="screen",
             parameters=[str(temp_config)],
         ),
-        Node(
-            package="rviz2",
-            executable="rviz2",
-            name="go2_mapping_bag_rviz",
-            output="screen",
-            arguments=["-d", str(rviz_config)],
-            condition=IfCondition(LaunchConfiguration("show_rviz")),
-        ),
     ]
+
+    if show_rviz:
+        nodes.append(
+            Node(
+                package="rviz2",
+                executable="rviz2",
+                name="go2_mapping_bag_rviz",
+                output="screen",
+                arguments=["-d", str(rviz_config)],
+            )
+        )
+
+    return nodes
 
 
 def generate_launch_description():

@@ -58,10 +58,14 @@ void RotateInPlaceBehavior::onInitialize(){
   node_->get_parameter(name_ + ".trajectory_generator_name", trajectory_generator_name_);
   RCLCPP_INFO(node_->get_logger().get_child(name_), "trajectory_generator_name: %s", trajectory_generator_name_.c_str());  
 
+  std::string cmd_vel_topic;
+  node_->declare_parameter(name_ + ".cmd_vel_topic", rclcpp::ParameterValue("cmd_vel"));
+  node_->get_parameter(name_ + ".cmd_vel_topic", cmd_vel_topic);
+  RCLCPP_INFO(node_->get_logger().get_child(name_), "cmd_vel_topic: %s", cmd_vel_topic.c_str());
   
   clock_ = node_->get_clock();
 
-  cmd_vel_pub_ = node_->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 1);
+  cmd_vel_pub_ = node_->create_publisher<geometry_msgs::msg::Twist>(cmd_vel_topic, 1);
   pub_trajectory_pose_array_ = node_->create_publisher<geometry_msgs::msg::PoseArray>(name_ + "_trajectory", 1);
 }
 

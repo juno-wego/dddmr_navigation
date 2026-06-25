@@ -102,6 +102,8 @@ void P2PMoveBase::initial(const std::shared_ptr<local_planner::Local_Planner>& l
   recovery_behaviors_client_ptr_ = rclcpp_action::create_client<dddmr_sys_core::action::RecoveryBehaviors>(
       this,
       "recovery_behaviors", recovery_behaviors_client_group_);
+  is_recoverying_ = false;
+  is_recoverying_succeed_ = false;
 
   //@Create action server
   action_server_p2p_move_base_ = rclcpp_action::create_server<dddmr_sys_core::action::PToPMoveBase>(
@@ -710,6 +712,12 @@ bool P2PMoveBase::executeCycle(const std::shared_ptr<rclcpp_action::ServerGoalHa
 }
 
 void P2PMoveBase::startRecoveryBehaviors(std::string behavior_name){
+  if(!STATE_->use_recovery_behaviors_){
+    RCLCPP_WARN(this->get_logger(), "Recovery behavior '%s' is disabled; aborting instead of publishing recovery cmd_vel.", behavior_name.c_str());
+    is_recoverying_ = false;
+    is_recoverying_succeed_ = false;
+    return;
+  }
 
   auto goal_msg = dddmr_sys_core::action::RecoveryBehaviors::Goal();
   goal_msg.behavior_name = behavior_name;

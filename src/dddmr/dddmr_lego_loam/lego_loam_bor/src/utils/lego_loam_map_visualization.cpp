@@ -30,8 +30,8 @@ LegoLoamVisualization::LegoLoamVisualization(std::string name) : Node(name)
   RCLCPP_INFO(this->get_logger(), "ground_edge_threshold_num: %d", ground_edge_threshold_num_);
   
   pubMap = this->create_publisher<sensor_msgs::msg::PointCloud2>("lego_loam_map", 1);  
-  pubGround = this->create_publisher<sensor_msgs::msg::PointCloud2>("lego_loam_ground", 1);  
-  pubGroundEdge = this->create_publisher<sensor_msgs::msg::PointCloud2>("lego_loam_ground_edge", 1);
+  pubGround = this->create_publisher<sensor_msgs::msg::PointCloud2>("lego_loam_ground_visualization", 1);  
+  pubGroundEdge = this->create_publisher<sensor_msgs::msg::PointCloud2>("lego_loam_ground_edge_visualization", 1);
 
   rclcpp::SubscriptionOptions sub_options;
   cbs_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
@@ -44,7 +44,8 @@ LegoLoamVisualization::LegoLoamVisualization(std::string name) : Node(name)
 
   // Initialize Service Client
  
-  get_key_frame_cloud_client_ = this->create_client<dddmr_sys_core::srv::GetKeyFrameCloud>("get_key_frame_cloud", rmw_qos_profile_services_default, cbs_group_);
+  client_group_ = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+  get_key_frame_cloud_client_ = this->create_client<dddmr_sys_core::srv::GetKeyFrameCloud>("get_key_frame_cloud", rmw_qos_profile_services_default, client_group_);
 
   // Initialize Timer
   sync_map_and_ground_timer_ = this->create_wall_timer(
@@ -82,6 +83,9 @@ void LegoLoamVisualization::cloudKeyPoses6D_callback(const sensor_msgs::msg::Poi
 
 void LegoLoamVisualization::syncMapAndGroundThread()
 {
+  if (sync_request_in_flight_.load()) {
+    return;
+  }
 
   auto request = std::make_shared<dddmr_sys_core::srv::GetKeyFrameCloud::Request>();
   request->key_frame_number = key_frame_clouds_.size();
@@ -91,11 +95,12 @@ void LegoLoamVisualization::syncMapAndGroundThread()
    return; 
   }
 
-  if (!get_key_frame_cloud_client_->wait_for_service(std::chrono::seconds(1))) {
-    RCLCPP_WARN(this->get_logger(), "Service get_key_frame_cloud not available");
+  if (!get_key_frame_cloud_client_->service_is_ready()) {
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *clock_, 2000, "Service get_key_frame_cloud not available");
     return;
   }
 
+  sync_request_in_flight_.store(true);
   get_key_frame_cloud_client_->async_send_request(request, 
     [this](rclcpp::Client<dddmr_sys_core::srv::GetKeyFrameCloud>::SharedFuture future) {
       try {
@@ -104,28 +109,23 @@ void LegoLoamVisualization::syncMapAndGroundThread()
         pcl::PointCloud<PointType> pcl_ground_cloud;
         pcl::PointCloud<PointType> pcl_ground_edge_cloud;
 
-        pcl::fromROSMsg(result->key_frame_cloud, pcl_cloud);
-        if(pcl_cloud.points.size()<1){
-          RCLCPP_INFO(this->get_logger(), "Empty key frame1");
-          return;
-        }
         pcl::fromROSMsg(result->key_frame_ground, pcl_ground_cloud);
         if(pcl_ground_cloud.points.size()<1){
-          RCLCPP_INFO(this->get_logger(), "Empty key frame2");
+          RCLCPP_INFO_THROTTLE(this->get_logger(), *clock_, 1000, "Empty ground key frame");
+          sync_request_in_flight_.store(false);
           return;
         }
 
+        pcl::fromROSMsg(result->key_frame_cloud, pcl_cloud);
         pcl::fromROSMsg(result->key_frame_ground_edge, pcl_ground_edge_cloud);
-        if(pcl_ground_edge_cloud.points.size()<1){
-          RCLCPP_INFO(this->get_logger(), "Empty key frame3");
-          return;
-        }
 
         RCLCPP_INFO_THROTTLE(this->get_logger(), *clock_, 1000, "Sync key frame number: %lu with total size: %lu", key_frame_clouds_.size(), cloudKeyPoses6D->size());
         key_frame_clouds_.push_back(pcl_cloud.makeShared());
         patchedGroundKeyFrames.push_back(pcl_ground_cloud.makeShared());
         patchedGroundEdgeKeyFrames.push_back(pcl_ground_edge_cloud.makeShared());
+        sync_request_in_flight_.store(false);
       } catch (const std::exception &e) {
+        sync_request_in_flight_.store(false);
         RCLCPP_ERROR(this->get_logger(), "Service call failed: %s", e.what());
       }
     });
@@ -222,9 +222,14 @@ void LegoLoamVisualization::groundEdgeDetectionThread() {
 
   //@ generate ground kdtree for edge to search
 
-  ds_patched_ground_omp_.setInputCloud(patched_ground);
-  ds_patched_ground_omp_.setFinalFilter(true);
-  ds_patched_ground_omp_.filter(*patched_ground);
+  if(patched_ground->empty()) return;
+  pcl::VoxelGrid<PointType> ds_patched_ground;
+  ds_patched_ground.setLeafSize(0.1, 0.5, 0.1);
+  ds_patched_ground.setInputCloud(patched_ground);
+  ds_patched_ground.filter(*patched_ground);
+  
+  if(patched_ground->empty()) return;
+
   pcl::KdTreeFLANN<PointType> kdtree_ground;
   kdtree_ground.setInputCloud(patched_ground);
   
@@ -315,9 +320,14 @@ void LegoLoamVisualization::groundEdgeDetectionThread() {
   //RCLCPP_INFO(this->get_logger(),"%lu, %lu", ground_edge_processed_.size(), globalGroundEdgeKeyFrames->points.size());
   //downSizeFilterGlobalGroundKeyFrames_Copy.setInputCloud(globalGroundEdgeKeyFrames);
   //downSizeFilterGlobalGroundKeyFrames_Copy.filter(*globalGroundEdgeKeyFrames);
-  downSizeFilterGlobalGroundKeyFrames_Copy_omp.setInputCloud(globalGroundEdgeKeyFrames);
-  downSizeFilterGlobalGroundKeyFrames_Copy_omp.setFinalFilter(true);
-  downSizeFilterGlobalGroundKeyFrames_Copy_omp.filter(*globalGroundEdgeKeyFrames);
+  if (globalGroundEdgeKeyFrames->empty()) {
+    return;
+  }
+  pcl::VoxelGrid<PointType> downSizeFilterGlobalGroundKeyFrames_Copy;
+  downSizeFilterGlobalGroundKeyFrames_Copy.setLeafSize(
+      ground_voxel_size_, ground_voxel_size_, ground_voxel_size_);
+  downSizeFilterGlobalGroundKeyFrames_Copy.setInputCloud(globalGroundEdgeKeyFrames);
+  downSizeFilterGlobalGroundKeyFrames_Copy.filter(*globalGroundEdgeKeyFrames);
   sensor_msgs::msg::PointCloud2 cloud_msg_ground_edge;
   pcl::toROSMsg(*globalGroundEdgeKeyFrames, cloud_msg_ground_edge);
   cloud_msg_ground_edge.header.stamp = clock_->now();
@@ -330,6 +340,17 @@ pcl::PointCloud<PointType>::Ptr LegoLoamVisualization::transformPointCloud(
     pcl::PointCloud<PointType>::Ptr cloudIn, PointTypePose *transformIn) {
 
   pcl::PointCloud<PointType>::Ptr cloudOut2(new pcl::PointCloud<PointType>());
+  if (!cloudIn || cloudIn->empty()) {
+    cloudOut2->width = 0;
+    cloudOut2->height = 1;
+    cloudOut2->is_dense = false;
+    return cloudOut2;
+  }
+  if (cloudIn->width == 0) {
+    cloudIn->width = cloudIn->points.size();
+    cloudIn->height = 1;
+    cloudIn->is_dense = false;
+  }
   
   Eigen::Affine3f af3_yaw = Eigen::Affine3f::Identity();
   af3_yaw.rotate (Eigen::AngleAxisf (transformIn->yaw, Eigen::Vector3f::UnitZ()));
@@ -349,6 +370,17 @@ pcl::PointCloud<PointType>::Ptr LegoLoamVisualization::transformPointCloudInvers
 
 
   pcl::PointCloud<PointType>::Ptr cloudOut2(new pcl::PointCloud<PointType>());
+  if (!cloudIn || cloudIn->empty()) {
+    cloudOut2->width = 0;
+    cloudOut2->height = 1;
+    cloudOut2->is_dense = false;
+    return cloudOut2;
+  }
+  if (cloudIn->width == 0) {
+    cloudIn->width = cloudIn->points.size();
+    cloudIn->height = 1;
+    cloudIn->is_dense = false;
+  }
   
   Eigen::Affine3f af3_yaw = Eigen::Affine3f::Identity();
   af3_yaw.rotate (Eigen::AngleAxisf (transformIn->yaw, Eigen::Vector3f::UnitZ()));

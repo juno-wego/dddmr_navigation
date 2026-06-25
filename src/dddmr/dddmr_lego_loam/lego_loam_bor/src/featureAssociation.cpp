@@ -541,11 +541,11 @@ void FeatureAssociation::extractFeatures() {
     // surfPointsFlat = surfPointsFlatFiltered;
 
     surfPointsLessFlatScanDS->clear();
-    //downSizeFilter.setInputCloud(surfPointsLessFlatScan);
-    //downSizeFilter.filter(*surfPointsLessFlatScanDS);
-    downSizeFilter_omp.setInputCloud(surfPointsLessFlatScan);
-    downSizeFilter_omp.setFinalFilter(true);
-    downSizeFilter_omp.filter(*surfPointsLessFlatScanDS);
+    if (surfPointsLessFlatScan->empty()) {
+      continue;
+    }
+    downSizeFilter.setInputCloud(surfPointsLessFlatScan);
+    downSizeFilter.filter(*surfPointsLessFlatScanDS);
     
     *surfPointsLessFlat += *surfPointsLessFlatScanDS;
   }
@@ -1413,11 +1413,21 @@ void FeatureAssociation::publishCloud() {
 
   auto Publish = [&](rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub,
                      const pcl::PointCloud<PointType>::Ptr &cloud) {
+    if (!cloud || cloud->points.empty()) {
+      return;
+    }
     
+    pcl::PointCloud<PointType> normalized_cloud = *cloud;
+    if (normalized_cloud.width == 0) {
+      normalized_cloud.width = normalized_cloud.points.size();
+      normalized_cloud.height = 1;
+      normalized_cloud.is_dense = false;
+    }
+
     pcl::PointCloud<PointType>::Ptr tmp_pub_cloud;
     tmp_pub_cloud.reset(new pcl::PointCloud<PointType>());
     Eigen::Affine3d trans_c2s_af3d = tf2::transformToEigen(trans_c2s_);
-    pcl::transformPointCloud(*cloud, *tmp_pub_cloud, trans_c2s_af3d.inverse());
+    pcl::transformPointCloud(normalized_cloud, *tmp_pub_cloud, trans_c2s_af3d.inverse());
     
     pcl::toROSMsg(*tmp_pub_cloud, laserCloudOutMsg);
     laserCloudOutMsg.header = cloudHeader;
@@ -1470,11 +1480,21 @@ void FeatureAssociation::publishCloudsLast() {
 
     auto Publish = [&](rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub,
                        const pcl::PointCloud<PointType>::Ptr &cloud) {
+      if (!cloud || cloud->points.empty()) {
+        return;
+      }
+
+      pcl::PointCloud<PointType> normalized_cloud = *cloud;
+      if (normalized_cloud.width == 0) {
+        normalized_cloud.width = normalized_cloud.points.size();
+        normalized_cloud.height = 1;
+        normalized_cloud.is_dense = false;
+      }
 
       pcl::PointCloud<PointType>::Ptr tmp_pub_cloud;
       tmp_pub_cloud.reset(new pcl::PointCloud<PointType>());
       Eigen::Affine3d trans_c2s_af3d = tf2::transformToEigen(trans_c2s_);
-      pcl::transformPointCloud(*cloud, *tmp_pub_cloud, trans_c2s_af3d.inverse());
+      pcl::transformPointCloud(normalized_cloud, *tmp_pub_cloud, trans_c2s_af3d.inverse());
       pcl::toROSMsg(*tmp_pub_cloud, cloudTemp);
       cloudTemp.header = cloudHeader;
       pub->publish(cloudTemp);

@@ -1,6 +1,7 @@
 #ifndef LEGO_LOAM_VISUALIZATION_HPP_
 #define LEGO_LOAM_VISUALIZATION_HPP_
 
+#include <atomic>
 
 #include <dddmr_sys_core/srv/get_key_frame_cloud.hpp>
 #include "utility.h"
@@ -45,6 +46,8 @@ private:
   rclcpp::TimerBase::SharedPtr timer_ground_edge_detection_;
   rclcpp::Client<dddmr_sys_core::srv::GetKeyFrameCloud>::SharedPtr get_key_frame_cloud_client_;
   rclcpp::CallbackGroup::SharedPtr cbs_group_;
+  rclcpp::CallbackGroup::SharedPtr client_group_;
+  std::atomic_bool sync_request_in_flight_{false};
   
   std::vector<pcl::PointCloud<PointType>::Ptr> patchedGroundEdgeProcessedKeyFrames;
   

@@ -1,11 +1,21 @@
 <launch>
 
+  <arg name="debug" default="false" description="Run lego_loam_bag under gdb in xterm" />
+  <arg name="rviz" default="true" description="Start RViz" />
+  <arg name="bag_file_dir" default="/root/dddmr_bags/weiwuyin_back_side" description="ROS bag directory to play" />
+
   <!--name argument is not required, because it will overwrite all node name in the exec-->
-  <node pkg="lego_loam_bor" exec="lego_loam_bag" output="screen" respawn="false" launch-prefix="xterm -e gdb --args" >
+  <node pkg="lego_loam_bor" exec="lego_loam_bag" output="screen" respawn="false" unless="$(var debug)" >
     <param from="$(find-pkg-share lego_loam_bor)/config/loam_bag_c16_config.yaml" />
+    <param name="bag_file_dir" value="$(var bag_file_dir)" />
   </node>
 
-  <node pkg="rviz2" exec="rviz2" output="screen" respawn="false" args="-d $(find-pkg-share lego_loam_bor)/rviz/lego_loam.rviz">
+  <node pkg="lego_loam_bor" exec="lego_loam_bag" output="screen" respawn="false" launch-prefix="xterm -e gdb --args" if="$(var debug)" >
+    <param from="$(find-pkg-share lego_loam_bor)/config/loam_bag_c16_config.yaml" />
+    <param name="bag_file_dir" value="$(var bag_file_dir)" />
+  </node>
+
+  <node pkg="rviz2" exec="rviz2" output="screen" respawn="false" if="$(var rviz)" args="-d $(find-pkg-share lego_loam_bor)/rviz/lego_loam.rviz">
   </node>
 
   <!--- TF -->

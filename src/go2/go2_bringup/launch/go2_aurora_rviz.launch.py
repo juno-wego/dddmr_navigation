@@ -61,6 +61,13 @@ def generate_launch_description():
     use_aurora = LaunchConfiguration("use_aurora")
     use_mid360 = LaunchConfiguration("use_mid360")
     use_go2_camera = LaunchConfiguration("use_go2_camera")
+    lidar_frame_id = LaunchConfiguration("lidar_frame_id")
+    lidar_transform_x = LaunchConfiguration("lidar_transform_x")
+    lidar_transform_y = LaunchConfiguration("lidar_transform_y")
+    lidar_transform_z = LaunchConfiguration("lidar_transform_z")
+    lidar_transform_roll = LaunchConfiguration("lidar_transform_roll")
+    lidar_transform_pitch = LaunchConfiguration("lidar_transform_pitch")
+    lidar_transform_yaw = LaunchConfiguration("lidar_transform_yaw")
 
     use_aurora_odom = IfCondition(
         PythonExpression(["'", use_aurora, "' == 'true' and '", odom_source, "' == 'aurora'"])
@@ -123,6 +130,15 @@ def generate_launch_description():
         name="go2_driver",
         output="screen",
         arguments=[interface],
+        parameters=[{
+            "lidar_frame_id": lidar_frame_id,
+            "lidar_transform_x": lidar_transform_x,
+            "lidar_transform_y": lidar_transform_y,
+            "lidar_transform_z": lidar_transform_z,
+            "lidar_transform_roll": lidar_transform_roll,
+            "lidar_transform_pitch": lidar_transform_pitch,
+            "lidar_transform_yaw": lidar_transform_yaw,
+        }],
         remappings=[
             ("odom", "/go2/wheel_odom"),
             ("/tf", "/go2/tf"),
@@ -138,6 +154,15 @@ def generate_launch_description():
         name="go2_driver",
         output="screen",
         arguments=[interface],
+        parameters=[{
+            "lidar_frame_id": lidar_frame_id,
+            "lidar_transform_x": lidar_transform_x,
+            "lidar_transform_y": lidar_transform_y,
+            "lidar_transform_z": lidar_transform_z,
+            "lidar_transform_roll": lidar_transform_roll,
+            "lidar_transform_pitch": lidar_transform_pitch,
+            "lidar_transform_yaw": lidar_transform_yaw,
+        }],
         condition=use_go2_odom,
     )
 
@@ -211,24 +236,6 @@ def generate_launch_description():
         ),
     )
 
-    base_link_to_mid360 = Node(
-        package="tf2_ros",
-        executable="static_transform_publisher",
-        name="base_link_to_mid360",
-        output="screen",
-        arguments=[
-            "--x", "0",
-            "--y", "0",
-            "--z", "0",
-            "--roll", "0",
-            "--pitch", "0",
-            "--yaw", "0",
-            "--frame-id", "base_link",
-            "--child-frame-id", "livox_frame",
-        ],
-        condition=IfCondition(use_mid360),
-    )
-
     return LaunchDescription(
         [
             DeclareLaunchArgument(
@@ -249,8 +256,15 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("use_go2", default_value="true"),
             DeclareLaunchArgument("use_aurora", default_value="true"),
-            DeclareLaunchArgument("use_mid360", default_value="true"),
+            DeclareLaunchArgument("use_mid360", default_value="false"),
             DeclareLaunchArgument("use_go2_camera", default_value="true"),
+            DeclareLaunchArgument("lidar_frame_id", default_value="utlidar"),
+            DeclareLaunchArgument("lidar_transform_x", default_value="0.0"),
+            DeclareLaunchArgument("lidar_transform_y", default_value="0.0"),
+            DeclareLaunchArgument("lidar_transform_z", default_value="0.0"),
+            DeclareLaunchArgument("lidar_transform_roll", default_value="0.0"),
+            DeclareLaunchArgument("lidar_transform_pitch", default_value="0.0"),
+            DeclareLaunchArgument("lidar_transform_yaw", default_value="0.0"),
             DeclareLaunchArgument("show_rviz", default_value="true"),
             aurora_launch_for_aurora_odom,
             aurora_launch_for_go2_odom,
@@ -260,7 +274,6 @@ def generate_launch_description():
             go2_camera,
             mid360_driver,
             aurora_base_to_go2_base_footprint,
-            base_link_to_mid360,
             OpaqueFunction(function=make_rviz_node),
         ]
     )

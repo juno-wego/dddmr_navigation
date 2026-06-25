@@ -1,6 +1,8 @@
 Panels:
   - Class: rviz_common/Displays
     Name: Displays
+  - Class: go2_bringup/LidarTFTunerPanel
+    Name: LiDAR TF Tuner
 Visualization Manager:
   Class: ""
   Displays:

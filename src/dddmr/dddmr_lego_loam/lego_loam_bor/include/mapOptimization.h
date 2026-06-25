@@ -375,6 +375,9 @@ private:
 
   std::vector<bool> ground_edge_processed_;
   bool broadcast_external_odom_tf_;
+  bool planar_mapping_tf_;
+  bool flatten_ground_z_;
+  double ground_publish_voxel_size_;
   bool has_m2ci_af3_;
   size_t current_ground_size_;
   bool generate_testing_pg_;

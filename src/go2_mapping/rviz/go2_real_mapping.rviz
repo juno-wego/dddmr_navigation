@@ -1,0 +1,568 @@
+Panels:
+  - Class: rviz_common/Displays
+    Help Height: 70
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Global Options1
+        - /Pose Graph1
+      Splitter Ratio: 0.5
+    Tree Height: 483
+  - Class: rviz_common/Views
+    Expanded:
+      - /Current View1
+    Name: Views
+    Splitter Ratio: 0.5
+  - Class: pose_graph_editor_panel/PoseGraphEditorPanel
+    Name: PoseGraphEditorPanel
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 1
+      Class: rviz_default_plugins/RobotModel
+      Collision Enabled: false
+      Description File: ""
+      Description Source: Topic
+      Description Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /robot_description
+      Enabled: false
+      Links:
+        All Links Enabled: true
+        Expand Joint Details: false
+        Expand Link Details: false
+        Expand Tree: false
+        Link Tree Style: Links in Alphabetic Order
+      Mass Properties:
+        Inertia: false
+        Mass: false
+      Name: Go2 Robot
+      TF Prefix: ""
+      Update Interval: 0
+      Value: false
+      Visual Enabled: true
+    - Alpha: 0.5
+      Cell Size: 1
+      Class: rviz_default_plugins/Grid
+      Color: 160; 160; 164
+      Enabled: true
+      Line Style:
+        Line Width: 0.029999999329447746
+        Value: Lines
+      Name: Grid
+      Normal Cell Count: 0
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Plane: XY
+      Plane Cell Count: 40
+      Reference Frame: <Fixed Frame>
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Frame Timeout: 15
+      Frames:
+        All Enabled: true
+        FL_calf:
+          Value: true
+        FL_calf_rotor:
+          Value: true
+        FL_calflower:
+          Value: true
+        FL_calflower1:
+          Value: true
+        FL_foot:
+          Value: true
+        FL_hip:
+          Value: true
+        FL_hip_rotor:
+          Value: true
+        FL_thigh:
+          Value: true
+        FL_thigh_rotor:
+          Value: true
+        FR_calf:
+          Value: true
+        FR_calf_rotor:
+          Value: true
+        FR_calflower:
+          Value: true
+        FR_calflower1:
+          Value: true
+        FR_foot:
+          Value: true
+        FR_hip:
+          Value: true
+        FR_hip_rotor:
+          Value: true
+        FR_thigh:
+          Value: true
+        FR_thigh_rotor:
+          Value: true
+        Head_lower:
+          Value: true
+        Head_upper:
+          Value: true
+        RL_calf:
+          Value: true
+        RL_calf_rotor:
+          Value: true
+        RL_calflower:
+          Value: true
+        RL_calflower1:
+          Value: true
+        RL_foot:
+          Value: true
+        RL_hip:
+          Value: true
+        RL_hip_rotor:
+          Value: true
+        RL_thigh:
+          Value: true
+        RL_thigh_rotor:
+          Value: true
+        RR_calf:
+          Value: true
+        RR_calf_rotor:
+          Value: true
+        RR_calflower:
+          Value: true
+        RR_calflower1:
+          Value: true
+        RR_foot:
+          Value: true
+        RR_hip:
+          Value: true
+        RR_hip_rotor:
+          Value: true
+        RR_thigh:
+          Value: true
+        RR_thigh_rotor:
+          Value: true
+        aurora_base:
+          Value: true
+        aurora_camera_left:
+          Value: true
+        aurora_camera_right:
+          Value: true
+        aurora_imu_link:
+          Value: true
+        aurora_laser:
+          Value: true
+        aurora_odom:
+          Value: true
+        base_footprint:
+          Value: true
+        base_link:
+          Value: true
+        camera_init:
+          Value: true
+        front_camera:
+          Value: true
+        imu:
+          Value: true
+        livox_frame:
+          Value: true
+        map:
+          Value: true
+        utlidar:
+          Value: true
+      Marker Scale: 0.4000000059604645
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: false
+      Tree:
+        aurora_odom:
+          aurora_base:
+            aurora_camera_left:
+              aurora_camera_right:
+                {}
+              aurora_imu_link:
+                {}
+            aurora_laser:
+              {}
+            base_footprint:
+              base_link:
+                FL_hip:
+                  FL_thigh:
+                    FL_calf:
+                      FL_calflower:
+                        FL_calflower1:
+                          {}
+                      FL_foot:
+                        {}
+                    FL_calf_rotor:
+                      {}
+                  FL_thigh_rotor:
+                    {}
+                FL_hip_rotor:
+                  {}
+                FR_hip:
+                  FR_thigh:
+                    FR_calf:
+                      FR_calflower:
+                        FR_calflower1:
+                          {}
+                      FR_foot:
+                        {}
+                    FR_calf_rotor:
+                      {}
+                  FR_thigh_rotor:
+                    {}
+                FR_hip_rotor:
+                  {}
+                Head_upper:
+                  Head_lower:
+                    {}
+                RL_hip:
+                  RL_thigh:
+                    RL_calf:
+                      RL_calflower:
+                        RL_calflower1:
+                          {}
+                      RL_foot:
+                        {}
+                    RL_calf_rotor:
+                      {}
+                  RL_thigh_rotor:
+                    {}
+                RL_hip_rotor:
+                  {}
+                RR_hip:
+                  RR_thigh:
+                    RR_calf:
+                      RR_calflower:
+                        RR_calflower1:
+                          {}
+                      RR_foot:
+                        {}
+                    RR_calf_rotor:
+                      {}
+                  RR_thigh_rotor:
+                    {}
+                RR_hip_rotor:
+                  {}
+                front_camera:
+                  {}
+                imu:
+                  {}
+                livox_frame:
+                  {}
+                utlidar:
+                  {}
+        map:
+          camera_init:
+            {}
+      Update Interval: 0
+      Value: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 255; 255; 255
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 4096
+      Min Color: 0; 0; 0
+      Min Intensity: 0
+      Name: Go2 Raw Lidar
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 2
+      Size (m): 0.019999999552965164
+      Style: Points
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /go2/lidar_points
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 255; 80; 80
+      Color Transformer: FlatColor
+      Decay Time: 0.20000000298023224
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 4096
+      Min Color: 0; 0; 0
+      Min Intensity: 0
+      Name: MID360 Raw Lidar
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 2
+      Size (m): 0.019999999552965164
+      Style: Points
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /livox/lidar
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+    - Alpha: 0.699999988079071
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 80; 180; 255
+      Color Transformer: FlatColor
+      Decay Time: 0.20000000298023224
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 4096
+      Min Color: 0; 0; 0
+      Min Intensity: 0
+      Name: Mapping Input
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 2
+      Size (m): 0.019999999552965164
+      Style: Points
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /go2/lidar_points_base
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 85; 170; 255
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 4096
+      Min Color: 0; 0; 0
+      Min Intensity: 0
+      Name: Segmented Cloud
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 2
+      Size (m): 0.019999999552965164
+      Style: Points
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /segmented_cloud_pure
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 50; 220; 120
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 4096
+      Min Color: 0; 0; 0
+      Min Intensity: 0
+      Name: Ground
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.20000000298023224
+      Style: Tiles
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /ground_cloud
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 170; 255; 255
+      Color Transformer: Intensity
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 199.3333282470703
+      Min Color: 0; 0; 0
+      Min Intensity: 126.62222290039062
+      Name: LegoLoam Ground
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.20000000298023224
+      Style: Tiles
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 5
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /lego_loam_ground
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 255; 210; 70
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 4096
+      Min Color: 0; 0; 0
+      Min Intensity: 0
+      Name: LegoLoam Map
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 2
+      Size (m): 0.019999999552965164
+      Style: Points
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /lego_loam_map
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Pose Graph
+      Namespaces:
+        pg_0_edge: true
+        pg_0_node: true
+      Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /pose_graph
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 28; 28; 28
+    Fixed Frame: map
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 19.80770492553711
+      Enable Stereo Rendering:
+        Stereo Eye Separation: 0.05999999865889549
+        Stereo Focal Distance: 1
+        Swap Stereo Eyes: false
+        Value: false
+      Focal Point:
+        X: 2.018577814102173
+        Y: 0.13406799733638763
+        Z: 0.0031111552380025387
+      Focal Shape Fixed Size: true
+      Focal Shape Size: 0.05000000074505806
+      Invert Z Axis: false
+      Name: Current View
+      Near Clip Distance: 0.009999999776482582
+      Pitch: 1.5697963237762451
+      Target Frame: <Fixed Frame>
+      Value: Orbit (rviz_default_plugins)
+      Yaw: 2.7168381214141846
+    Saved: ~
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 704
+  Hide Left Dock: false
+  Hide Right Dock: false
+  PoseGraphEditorPanel:
+    collapsed: false
+  QMainWindow State: 000000ff00000000fd00000001000000000000022b00000266fc0200000003fb000000100044006900730070006c006100790073010000003d00000266000000c900fffffffb0000000a00560069006500770073000000010c000000a4000000a400fffffffb000000280050006f00730065004700720061007000680045006400690074006f007200500061006e0065006c000000011d000001860000016700ffffff000001890000026600000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  Views:
+    collapsed: false
+  Width: 954
+  X: 70
+  Y: 27

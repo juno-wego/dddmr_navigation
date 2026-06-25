@@ -45,8 +45,25 @@ ImageProjection::ImageProjection(std::string name, Channel<ProjectionOut>& outpu
   _pub_projected_image = this->create_publisher<sensor_msgs::msg::Image>("projected_image", 1);
 
   _sub_laser_cloud = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-        "lslidar_point_cloud", rclcpp::QoS(rclcpp::KeepLast(1)).durability_volatile().best_effort(), 
+        "lslidar_point_cloud", rclcpp::QoS(rclcpp::KeepLast(5)).durability_volatile().reliable(),
         std::bind(&ImageProjection::cloudHandler, this, std::placeholders::_1));
+
+  external_ground_source_.reset(new pcl::PointCloud<PointType>());
+  declare_parameter("imageProjection.external_ground_topic", rclcpp::ParameterValue(""));
+  this->get_parameter("imageProjection.external_ground_topic", external_ground_topic_);
+  if (!external_ground_topic_.empty()) {
+    ground_source_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+    rclcpp::SubscriptionOptions options;
+    options.callback_group = ground_source_group_;
+    ground_source_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+        external_ground_topic_,
+        rclcpp::QoS(rclcpp::KeepLast(5)).durability_volatile().reliable(),
+        std::bind(&ImageProjection::groundSourceHandler, this, std::placeholders::_1),
+        options);
+    RCLCPP_INFO(
+        this->get_logger(), "Using external ground source: %s",
+        external_ground_topic_.c_str());
+  }
 
   _pub_full_info_cloud = this->create_publisher<sensor_msgs::msg::PointCloud2>
       ("full_cloud_info", 1);  
@@ -204,6 +221,30 @@ ImageProjection::ImageProjection(std::string name, Channel<ProjectionOut>& outpu
   this->get_parameter("imageProjection.patch_first_ring_to_baselink", patch_first_ring_to_baselink_);
   RCLCPP_INFO(this->get_logger(), "imageProjection.patch_first_ring_to_baselink: %d", patch_first_ring_to_baselink_);
 
+  declare_parameter("imageProjection.unorganized_cloud_mode", rclcpp::ParameterValue(false));
+  this->get_parameter("imageProjection.unorganized_cloud_mode", unorganized_cloud_mode_);
+  RCLCPP_INFO(this->get_logger(), "imageProjection.unorganized_cloud_mode: %d", unorganized_cloud_mode_);
+
+  declare_parameter("imageProjection.unorganized_ground_ring_count", rclcpp::ParameterValue(3));
+  this->get_parameter("imageProjection.unorganized_ground_ring_count", unorganized_ground_ring_count_);
+  RCLCPP_INFO(this->get_logger(), "imageProjection.unorganized_ground_ring_count: %d", unorganized_ground_ring_count_);
+
+  declare_parameter("imageProjection.unorganized_ground_min_z", rclcpp::ParameterValue(-0.65));
+  this->get_parameter("imageProjection.unorganized_ground_min_z", unorganized_ground_min_z_);
+  RCLCPP_INFO(this->get_logger(), "imageProjection.unorganized_ground_min_z: %.2f", unorganized_ground_min_z_);
+
+  declare_parameter("imageProjection.unorganized_ground_max_z", rclcpp::ParameterValue(-0.05));
+  this->get_parameter("imageProjection.unorganized_ground_max_z", unorganized_ground_max_z_);
+  RCLCPP_INFO(this->get_logger(), "imageProjection.unorganized_ground_max_z: %.2f", unorganized_ground_max_z_);
+
+  declare_parameter("imageProjection.unorganized_ground_max_radius", rclcpp::ParameterValue(0.0));
+  this->get_parameter("imageProjection.unorganized_ground_max_radius", unorganized_ground_max_radius_);
+  RCLCPP_INFO(this->get_logger(), "imageProjection.unorganized_ground_max_radius: %.2f", unorganized_ground_max_radius_);
+
+  declare_parameter("imageProjection.unorganized_ground_edge_stride", rclcpp::ParameterValue(12));
+  this->get_parameter("imageProjection.unorganized_ground_edge_stride", unorganized_ground_edge_stride_);
+  RCLCPP_INFO(this->get_logger(), "imageProjection.unorganized_ground_edge_stride: %d", unorganized_ground_edge_stride_);
+
   this->declare_parameter("imageProjection.trt_model_path", rclcpp::ParameterValue(""));
   this->get_parameter("imageProjection.trt_model_path", trt_model_path_);
   RCLCPP_INFO(this->get_logger(), "imageProjection.trt_model_path: %s" , trt_model_path_.c_str());
@@ -245,6 +286,12 @@ ImageProjection::ImageProjection(std::string name, Channel<ProjectionOut>& outpu
 
   _full_cloud->points.resize(cloud_size);
   _full_info_cloud->points.resize(cloud_size);
+  _full_cloud->width = _horizontal_scans;
+  _full_cloud->height = _vertical_scans;
+  _full_cloud->is_dense = false;
+  _full_info_cloud->width = _horizontal_scans;
+  _full_info_cloud->height = _vertical_scans;
+  _full_info_cloud->is_dense = false;
   
   dsf_patched_ground_.setLeafSize(0.1, 0.1, 0.1);
   
@@ -359,7 +406,10 @@ bool ImageProjection::allEssentialTFReady(std::string sensor_frame){
     }
     catch (tf2::TransformException& e)
     {
-      RCLCPP_ERROR(this->get_logger(), "Could not get footprint frame to sensor frame, did you launch a static broadcaster node for the tf between footprint to sensor?");
+      RCLCPP_WARN_THROTTLE(
+        this->get_logger(), *clock_, 2000,
+        "Waiting for TF %s -> %s: %s",
+        base_ground_frame_.c_str(), sensor_frame_.c_str(), e.what());
       return false;
     }
   }
@@ -370,6 +420,13 @@ bool ImageProjection::allEssentialTFReady(std::string sensor_frame){
 
 void ImageProjection::cloudHandler(
     const sensor_msgs::msg::PointCloud2::SharedPtr laserCloudMsg){
+
+  RCLCPP_INFO_THROTTLE(
+    this->get_logger(), *clock_, 2000,
+    "Received cloud frame=%s width=%u height=%u",
+    laserCloudMsg->header.frame_id.c_str(),
+    laserCloudMsg->width,
+    laserCloudMsg->height);
 
   if(!allEssentialTFReady(laserCloudMsg->header.frame_id))
     return;
@@ -403,8 +460,13 @@ void ImageProjection::cloudHandler(
   }
 
   pc_valid_ = true;
-  if(_laser_cloud_in->points.size()<_vertical_scans*_horizontal_scans*0.1*(stitcher_num_)){
-    RCLCPP_ERROR(this->get_logger(), "Expecting: %d points, but you only got %lu, check your lidar scan.", _vertical_scans*_horizontal_scans, _laser_cloud_in->points.size());
+  const double min_cloud_ratio = unorganized_cloud_mode_ ? 0.01 : 0.1;
+  if(_laser_cloud_in->points.size()<_vertical_scans*_horizontal_scans*min_cloud_ratio*(stitcher_num_)){
+    RCLCPP_WARN_THROTTLE(
+      this->get_logger(), *clock_, 2000,
+      "Expecting at least %.0f points, but got %lu after stitching/filtering.",
+      _vertical_scans*_horizontal_scans*min_cloud_ratio*(stitcher_num_),
+      _laser_cloud_in->points.size());
     pc_valid_ = false;
     return;
   }
@@ -416,12 +478,227 @@ void ImageProjection::cloudHandler(
   findStartEndAngle();
   // Range image projection
   projectPointCloud();
+  if(unorganized_cloud_mode_){
+    buildUnorganizedCloudProjection();
+    if (!external_ground_topic_.empty() && !replaceGroundWithExternalSource()) {
+      RCLCPP_WARN_THROTTLE(
+        this->get_logger(), *clock_, 2000,
+        "External ground is unavailable; using ground extracted from the merged cloud.");
+    }
+    RCLCPP_INFO_THROTTLE(
+      this->get_logger(), *clock_, 2000,
+      "Unorganized projection: input=%lu segmented=%lu ground=%lu",
+      _laser_cloud_in->points.size(),
+      _segmented_cloud_pure->points.size(),
+      patched_ground_->points.size());
+    publishClouds();
+    return;
+  }
   // Mark ground points
   zPitchRollFeatureRemoval();
   // Point cloud segmentation
   cloudSegmentation();
   //publish (optionally)
   publishClouds();
+}
+
+void ImageProjection::groundSourceHandler(
+    const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+  pcl::PointCloud<PointType>::Ptr cloud(new pcl::PointCloud<PointType>());
+  pcl::fromROSMsg(*msg, *cloud);
+  cloud->is_dense = false;
+  std::vector<int> indices;
+  pcl::removeNaNFromPointCloud(*cloud, *cloud, indices);
+
+  std::lock_guard<std::mutex> lock(external_ground_mutex_);
+  external_ground_source_ = cloud;
+  external_ground_frame_ = msg->header.frame_id;
+}
+
+bool ImageProjection::replaceGroundWithExternalSource() {
+  if (external_ground_topic_.empty()) {
+    return false;
+  }
+
+  pcl::PointCloud<PointType>::Ptr source;
+  std::string source_frame;
+  {
+    std::lock_guard<std::mutex> lock(external_ground_mutex_);
+    source = external_ground_source_;
+    source_frame = external_ground_frame_;
+  }
+
+  if (!source || source->empty()) {
+    RCLCPP_WARN_THROTTLE(
+        this->get_logger(), *clock_, 2000,
+        "Waiting for external ground source %s", external_ground_topic_.c_str());
+    return false;
+  }
+  if (source_frame != base_ground_frame_) {
+    RCLCPP_WARN_THROTTLE(
+        this->get_logger(), *clock_, 2000,
+        "External ground source must be in %s, received %s",
+        base_ground_frame_.c_str(), source_frame.c_str());
+    return false;
+  }
+
+  pcl::PointCloud<PointType>::Ptr candidate_ground(new pcl::PointCloud<PointType>());
+  pcl::PointCloud<PointType>::Ptr candidate_ground_edge(new pcl::PointCloud<PointType>());
+  const double min_ground_z = std::min(unorganized_ground_min_z_, unorganized_ground_max_z_);
+  const double max_ground_z = std::max(unorganized_ground_min_z_, unorganized_ground_max_z_);
+  const double max_ground_radius = std::max(0.0, unorganized_ground_max_radius_);
+  const double max_ground_radius_sq = max_ground_radius * max_ground_radius;
+  const int edge_stride = std::max(1, unorganized_ground_edge_stride_);
+  int ground_count = 0;
+  for (const auto& point : source->points) {
+    if (point.z < min_ground_z || point.z > max_ground_z) {
+      continue;
+    }
+    if (max_ground_radius > 0.0 &&
+        point.x * point.x + point.y * point.y > max_ground_radius_sq) {
+      continue;
+    }
+    candidate_ground->push_back(point);
+    if ((ground_count % edge_stride) == 0) {
+      PointType edge = point;
+      edge.intensity = 1000;
+      candidate_ground_edge->push_back(edge);
+    }
+    ++ground_count;
+  }
+
+  candidate_ground->is_dense = false;
+  candidate_ground_edge->is_dense = false;
+  dsf_patched_ground_.setInputCloud(candidate_ground);
+  dsf_patched_ground_.filter(*candidate_ground);
+  dsf_patched_ground_.setInputCloud(candidate_ground_edge);
+  dsf_patched_ground_.filter(*candidate_ground_edge);
+
+  if (candidate_ground->empty()) {
+    RCLCPP_WARN_THROTTLE(
+        this->get_logger(), *clock_, 2000,
+        "External ground source has no points in z range [%.2f, %.2f]",
+        min_ground_z, max_ground_z);
+    return false;
+  }
+
+  patched_ground_.swap(candidate_ground);
+  patched_ground_edge_.swap(candidate_ground_edge);
+
+  RCLCPP_INFO_THROTTLE(
+      this->get_logger(), *clock_, 2000,
+      "External Unitree ground: input=%zu ground=%zu edge=%zu",
+      source->size(), patched_ground_->size(), patched_ground_edge_->size());
+  return true;
+}
+
+void ImageProjection::buildUnorganizedCloudProjection() {
+  _segmented_cloud->clear();
+  _segmented_cloud_pure->clear();
+  _outlier_cloud->clear();
+  patched_ground_->clear();
+  patched_ground_edge_->clear();
+
+  int sizeOfSegCloud = 0;
+  const int ground_edge_stride = std::max(1, unorganized_ground_edge_stride_);
+  const double min_ground_z = std::min(unorganized_ground_min_z_, unorganized_ground_max_z_);
+  const double max_ground_z = std::max(unorganized_ground_min_z_, unorganized_ground_max_z_);
+  const double max_ground_radius = std::max(0.0, unorganized_ground_max_radius_);
+  const double max_ground_radius_sq = max_ground_radius * max_ground_radius;
+  int ground_point_count = 0;
+
+  for (int i = 0; i < _vertical_scans; ++i) {
+    _seg_msg.start_ring_index[i] = sizeOfSegCloud + 5;
+
+    for (int j = 0; j < _horizontal_scans; ++j) {
+      const size_t ind = j + i * _horizontal_scans;
+      const PointType &pt = _full_cloud->points[ind];
+      if (!pcl::isFinite(pt) || _range_mat(i, j) == FLT_MAX) {
+        continue;
+      }
+
+      if (sizeOfSegCloud >= static_cast<int>(_seg_msg.segmented_cloud_ground_flag.size())) {
+        break;
+      }
+
+      const tf2::Vector3 point_in_base =
+          tf2_trans_b2s_ * tf2::Vector3(pt.x, pt.y, pt.z);
+      const bool ground_like =
+          point_in_base.z() >= min_ground_z && point_in_base.z() <= max_ground_z &&
+          (max_ground_radius <= 0.0 ||
+           point_in_base.x() * point_in_base.x() + point_in_base.y() * point_in_base.y() <= max_ground_radius_sq);
+      _seg_msg.segmented_cloud_ground_flag[sizeOfSegCloud] = ground_like;
+      _seg_msg.segmented_cloud_col_ind[sizeOfSegCloud] = j;
+      _seg_msg.segmented_cloud_range[sizeOfSegCloud] = _range_mat(i, j);
+
+      _segmented_cloud->push_back(pt);
+      _segmented_cloud_pure->push_back(pt);
+
+      if (ground_like) {
+        patched_ground_->push_back(pt);
+        if ((ground_point_count % ground_edge_stride) == 0) {
+          PointType edge_pt = pt;
+          edge_pt.intensity = 1000;
+          patched_ground_edge_->push_back(edge_pt);
+        }
+        ++ground_point_count;
+      }
+
+      ++sizeOfSegCloud;
+    }
+
+    _seg_msg.end_ring_index[i] = sizeOfSegCloud - 5;
+  }
+
+  pcl::PointCloud<PointType>::Ptr direct_ground(new pcl::PointCloud<PointType>());
+  pcl::PointCloud<PointType>::Ptr direct_ground_edge(new pcl::PointCloud<PointType>());
+  int direct_ground_count = 0;
+  for (const auto &pt : _laser_cloud_in->points) {
+    if (!pcl::isFinite(pt)) {
+      continue;
+    }
+
+    const tf2::Vector3 point_in_base =
+        tf2_trans_b2s_ * tf2::Vector3(pt.x, pt.y, pt.z);
+    if (point_in_base.z() < min_ground_z || point_in_base.z() > max_ground_z) {
+      continue;
+    }
+    if (max_ground_radius > 0.0 &&
+        point_in_base.x() * point_in_base.x() + point_in_base.y() * point_in_base.y() > max_ground_radius_sq) {
+      continue;
+    }
+
+    direct_ground->push_back(pt);
+    if ((direct_ground_count % ground_edge_stride) == 0) {
+      PointType edge_pt = pt;
+      edge_pt.intensity = 1000;
+      direct_ground_edge->push_back(edge_pt);
+    }
+    ++direct_ground_count;
+  }
+
+  if (!direct_ground->empty()) {
+    patched_ground_.swap(direct_ground);
+    patched_ground_edge_.swap(direct_ground_edge);
+  }
+
+  patched_ground_->is_dense = false;
+  patched_ground_edge_->is_dense = false;
+  std::vector<int> tmp_indices, tmp_indices2;
+  pcl::removeNaNFromPointCloud(*patched_ground_, *patched_ground_, tmp_indices);
+  pcl::removeNaNFromPointCloud(*patched_ground_edge_, *patched_ground_edge_, tmp_indices2);
+
+  dsf_patched_ground_.setInputCloud(patched_ground_);
+  dsf_patched_ground_.filter(*patched_ground_);
+
+  dsf_patched_ground_.setInputCloud(patched_ground_edge_);
+  dsf_patched_ground_.filter(*patched_ground_edge_);
+
+  RCLCPP_INFO_THROTTLE(
+      this->get_logger(), *clock_, 2000,
+      "Unorganized ground by %s z: min=%.2f max=%.2f ground=%lu edge=%lu",
+      base_ground_frame_.c_str(), min_ground_z, max_ground_z,
+      patched_ground_->points.size(), patched_ground_edge_->points.size());
 }
 
 
@@ -445,15 +722,22 @@ void ImageProjection::projectPointCloud() {
                        thisPoint.y * thisPoint.y +
                        thisPoint.z * thisPoint.z);
 
+    tf2::Vector3 projection_point(thisPoint.x, thisPoint.y, thisPoint.z);
+    if (unorganized_cloud_mode_) {
+      projection_point = tf2_trans_b2s_.getBasis() * projection_point;
+    }
+
     // find the row and column index in the image for this point
-    float verticalAngle = std::asin(thisPoint.z / range);
+    const float projection_range =
+        std::max(1e-6f, static_cast<float>(projection_point.length()));
+    float verticalAngle = std::asin(projection_point.z() / projection_range);
 
     int rowIdn = (verticalAngle + _ang_bottom) / _ang_resolution_Y;
     if (rowIdn < 0 || rowIdn >= _vertical_scans) {
       continue;
     }
 
-    float horizonAngle = std::atan2(thisPoint.y, thisPoint.x);
+    float horizonAngle = std::atan2(projection_point.y(), projection_point.x());
 
     int viscolumnIdn = -round((horizonAngle) / _ang_resolution_X) + _horizontal_scans * 0.5;
 
@@ -603,6 +887,11 @@ void ImageProjection::findStartEndAngle() {
   }
   _seg_msg.orientation_diff =
       _seg_msg.end_orientation - _seg_msg.start_orientation;
+
+  if (std::abs(_seg_msg.orientation_diff) < 1e-3) {
+    _seg_msg.end_orientation = _seg_msg.start_orientation + 2 * M_PI;
+    _seg_msg.orientation_diff = 2 * M_PI;
+  }
 
 }
 
@@ -924,17 +1213,11 @@ void ImageProjection::zPitchRollFeatureRemoval() {
   pcl::removeNaNFromPointCloud(*patched_ground_, *patched_ground_, tmp_indices);
   pcl::removeNaNFromPointCloud(*patched_ground_edge_, *patched_ground_edge_, tmp_indices2);
   
-  //dsf_patched_ground_.setInputCloud(patched_ground_);
-  //dsf_patched_ground_.filter(*patched_ground_);
-  dsf_patched_ground_omp_.setInputCloud(patched_ground_);
-  dsf_patched_ground_omp_.setFinalFilter(true);
-  dsf_patched_ground_omp_.filter(*patched_ground_);
+  dsf_patched_ground_.setInputCloud(patched_ground_);
+  dsf_patched_ground_.filter(*patched_ground_);
 
-  //dsf_patched_ground_.setInputCloud(patched_ground_edge_);
-  //dsf_patched_ground_.filter(*patched_ground_edge_); 
-  dsf_patched_ground_edge_omp_.setInputCloud(patched_ground_edge_);
-  dsf_patched_ground_edge_omp_.setFinalFilter(true);
-  dsf_patched_ground_edge_omp_.filter(*patched_ground_edge_); 
+  dsf_patched_ground_.setInputCloud(patched_ground_edge_);
+  dsf_patched_ground_.filter(*patched_ground_edge_);
 }
 
 void ImageProjection::cloudSegmentation() {
@@ -1132,5 +1415,3 @@ void ImageProjection::publishClouds() {
   first_frame_processed_++;
 
 }
-
-

@@ -65,6 +65,7 @@ namespace slamware_ros_sdk {
         // Enhanced imaging topics
         this->declare_parameter<std::string>("depth_image_raw_topic_name", "/slamware_ros_sdk_server_node/depth_image_raw");
         this->declare_parameter<std::string>("depth_image_colorized_topic_name", "/slamware_ros_sdk_server_node/depth_image_colorized");
+        this->declare_parameter<std::string>("depth_point_cloud_topic_name", "/slamware_ros_sdk_server_node/depth_point_cloud");
         this->declare_parameter<std::string>("semantic_segmentation_topic_name", "/slamware_ros_sdk_server_node/semantic_segmentation");
 
         this->declare_parameter<std::string>("imu_raw_data_topic", "/slamware_ros_sdk_server_node/imu_raw_data");
@@ -72,132 +73,86 @@ namespace slamware_ros_sdk {
 
     void ServerParams::setBy(const std::shared_ptr<rclcpp::Node> nhRos)
     {
-        std::string strVal;
-        bool bVal;
-        int iVal;
-        float fVal;
-        if (nhRos->has_parameter("ip_address")) {
-            nhRos->declare_parameter<std::string>("ip_address", strVal);
-        }
-        if (nhRos->has_parameter("reconn_wait_ms")) {
-            nhRos->declare_parameter<int>("reconn_wait_ms", iVal);
-        }
-        if (nhRos->has_parameter("angle_compensate")) {
-            nhRos->declare_parameter<bool>("angle_compensate", bVal);
-        }
-        if (nhRos->has_parameter("ladar_data_clockwise")) {
-            nhRos->declare_parameter<bool>("ladar_data_clockwise", bVal);
-        }
+        auto syncString = [this, nhRos](const std::string& name) {
+            auto value = this->getParameter<std::string>(name);
+            if (nhRos->has_parameter(name)) {
+                nhRos->get_parameter(name, value);
+            } else {
+                value = nhRos->declare_parameter<std::string>(name, value);
+            }
+            this->set_parameter(rclcpp::Parameter(name, value));
+        };
+        auto syncBool = [this, nhRos](const std::string& name) {
+            auto value = this->getParameter<bool>(name);
+            if (nhRos->has_parameter(name)) {
+                nhRos->get_parameter(name, value);
+            } else {
+                value = nhRos->declare_parameter<bool>(name, value);
+            }
+            this->set_parameter(rclcpp::Parameter(name, value));
+        };
+        auto syncInt = [this, nhRos](const std::string& name) {
+            auto value = this->getParameter<int>(name);
+            if (nhRos->has_parameter(name)) {
+                nhRos->get_parameter(name, value);
+            } else {
+                value = nhRos->declare_parameter<int>(name, value);
+            }
+            this->set_parameter(rclcpp::Parameter(name, value));
+        };
+        auto syncFloat = [this, nhRos](const std::string& name) {
+            auto value = this->getParameter<float>(name);
+            if (nhRos->has_parameter(name)) {
+                nhRos->get_parameter(name, value);
+            } else {
+                value = nhRos->declare_parameter<float>(name, value);
+            }
+            this->set_parameter(rclcpp::Parameter(name, value));
+        };
 
-        if (nhRos->has_parameter("robot_frame")) {
-            nhRos->declare_parameter<std::string>("robot_frame", strVal);
-        }
-        if (nhRos->has_parameter("laser_frame")) {
-            nhRos->declare_parameter<std::string>("laser_frame", strVal);
-        }
-        if (nhRos->has_parameter("map_frame")) {
-            nhRos->declare_parameter<std::string>("map_frame", strVal);
-        }
-        if (nhRos->has_parameter("odom_frame"))
-        {
-            nhRos->declare_parameter<std::string>("odom_frame", strVal);
-        }
-        if (nhRos->has_parameter("imu_frame")) {
-            nhRos->declare_parameter<std::string>("imu_frame", strVal);
-        }
-        if (nhRos->has_parameter("camera_left")) {
-            nhRos->declare_parameter<std::string>("camera_left", strVal);
-        }
-        if (nhRos->has_parameter("camera_right")) {
-            nhRos->declare_parameter<std::string>("camera_right", strVal);
-        }
-        if (nhRos->has_parameter("odometry_pub_period"))
-        {
-            nhRos->declare_parameter<float>("odometry_pub_period", fVal);
-        }
-        if (nhRos->has_parameter("robot_pose_pub_period")) {
-            nhRos->declare_parameter<float>("robot_pose_pub_period", fVal);
-        }
-        if (nhRos->has_parameter("scan_pub_period")) {
-            nhRos->declare_parameter<float>("scan_pub_period", fVal);
-        }
-        if (nhRos->has_parameter("map_update_period")) {
-            nhRos->declare_parameter<float>("map_update_period", fVal);
-        }
-        if (nhRos->has_parameter("map_pub_period")) {
-            nhRos->declare_parameter<float>("map_pub_period", fVal);
-        }
-        if (nhRos->has_parameter("map_sync_once_get_max_wh")) {
-            nhRos->declare_parameter<float>("map_sync_once_get_max_wh", fVal);
-        }
-        if (nhRos->has_parameter("map_update_near_robot_half_wh")) {
-            nhRos->declare_parameter<float>("map_update_near_robot_half_wh", fVal);
-        }
-        if (nhRos->has_parameter("system_status_pub_period")) {
-            nhRos->declare_parameter<float>("system_status_pub_period", fVal);
-        }
-        if (nhRos->has_parameter("stereo_image_pub_period")) {
-            nhRos->declare_parameter<float>("stereo_image_pub_period", fVal);
-        }
-        if (nhRos->has_parameter("point_cloud_pub_period")) {
-            nhRos->declare_parameter<float>("point_cloud_pub_period", fVal);
-        }
+        syncString("ip_address");
+        syncInt("reconn_wait_ms");
+        syncBool("angle_compensate");
+        syncBool("ladar_data_clockwise");
 
-        if (nhRos->has_parameter("scan_topic")) {
-            nhRos->declare_parameter<std::string>("scan_topic", strVal);
-        }
-        if (nhRos->has_parameter("odom_topic"))
-        {
-            nhRos->declare_parameter<std::string>("odom_topic", strVal);
-        }
-        if (nhRos->has_parameter("robot_pose_topic")) {
-            nhRos->declare_parameter<std::string>("robot_pose_topic", strVal);
-        }
-        if (nhRos->has_parameter("map_topic")) {
-            nhRos->declare_parameter<std::string>("map_topic", strVal);
-        }
-        if (nhRos->has_parameter("map_info_topic")) {
-            nhRos->declare_parameter<std::string>("map_info_topic", strVal);
-        }
-        if (nhRos->has_parameter("system_status_topic_name")) {
-            nhRos->declare_parameter<std::string>("system_status_topic_name", strVal);
-        }
-        if (nhRos->has_parameter("relocalization_status_topic_name")) {
-            nhRos->declare_parameter<std::string>("relocalization_status_topic_name", strVal);
-        }
-        if (nhRos->has_parameter("left_image_raw_topic_name")) {
-            nhRos->declare_parameter<std::string>("left_image_raw_topic_name", strVal);
-        }
-        if (nhRos->has_parameter("right_image_raw_topic_name")) {
-            nhRos->declare_parameter<std::string>("right_image_raw_topic_name", strVal);
-        }
-        if (nhRos->has_parameter("point_cloud_topic_name")) {
-            nhRos->declare_parameter<std::string>("point_cloud_topic_name", strVal);
-        }
-        if (nhRos->has_parameter("stereo_keypoints_topic_name")) {
-            nhRos->declare_parameter<std::string>("stereo_keypoints_topic_name", strVal);
-        }
-        
-        // Enhanced imaging topics
-        if (nhRos->has_parameter("depth_image_raw_topic_name")) {
-            nhRos->declare_parameter<std::string>("depth_image_raw_topic_name", strVal);
-        }
-        if (nhRos->has_parameter("depth_image_colorized_topic_name")) {
-            nhRos->declare_parameter<std::string>("depth_image_colorized_topic_name", strVal);
-        }
-        if (nhRos->has_parameter("semantic_segmentation_topic_name")) {
-            nhRos->declare_parameter<std::string>("semantic_segmentation_topic_name", strVal);
-        }
-        if (nhRos->has_parameter("right_image_keypoints_topic_name")) {
-            nhRos->declare_parameter<std::string>("right_image_keypoints_topic_name", strVal);
-        }
-        
-        if (nhRos->has_parameter("imu_raw_data_topic")) {
-            nhRos->declare_parameter<std::string>("imu_raw_data_topic", strVal);
-        }
-        if (nhRos->has_parameter("imu_raw_data_period")) {
-            nhRos->declare_parameter<float>("imu_raw_data_period", fVal);
-        }
+        syncString("robot_frame");
+        syncString("laser_frame");
+        syncString("map_frame");
+        syncString("odom_frame");
+        syncString("imu_frame");
+        syncString("camera_left");
+        syncString("camera_right");
+
+        syncFloat("odometry_pub_period");
+        syncFloat("robot_pose_pub_period");
+        syncFloat("scan_pub_period");
+        syncFloat("map_update_period");
+        syncFloat("map_pub_period");
+        syncFloat("map_sync_once_get_max_wh");
+        syncFloat("map_update_near_robot_half_wh");
+        syncFloat("system_status_pub_period");
+        syncFloat("stereo_image_pub_period");
+        syncFloat("point_cloud_pub_period");
+        syncFloat("enhanced_imaging_pub_period");
+        syncFloat("robot_basic_state_pub_period");
+        syncFloat("imu_raw_data_period");
+
+        syncString("scan_topic");
+        syncString("odom_topic");
+        syncString("robot_pose_topic");
+        syncString("map_topic");
+        syncString("map_info_topic");
+        syncString("system_status_topic_name");
+        syncString("relocalization_status_topic_name");
+        syncString("left_image_raw_topic_name");
+        syncString("right_image_raw_topic_name");
+        syncString("point_cloud_topic_name");
+        syncString("stereo_keypoints_topic_name");
+        syncString("depth_image_raw_topic_name");
+        syncString("depth_image_colorized_topic_name");
+        syncString("depth_point_cloud_topic_name");
+        syncString("semantic_segmentation_topic_name");
+        syncString("imu_raw_data_topic");
     }
 
     //////////////////////////////////////////////////////////////////////////

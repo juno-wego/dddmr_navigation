@@ -10,11 +10,13 @@
 #include "sensor_msgs/msg/imu.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "tf2/LinearMath/Quaternion.hpp"
+#include "tf2/LinearMath/Transform.hpp"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 #include "tf2_ros/transform_broadcaster.h"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "rmw/qos_profiles.h"
 #include "sensor_msgs/msg/point_cloud2.hpp"
+#include "sensor_msgs/point_cloud2_iterator.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "std_msgs/msg/int32.hpp"
 #include "std_msgs/msg/bool.hpp"
@@ -72,6 +74,38 @@ public:
     Go2Driver()
     : Node("go2_driver")
     {
+        lidar_frame_id_ = this->declare_parameter<std::string>("lidar_frame_id", "utlidar");
+        const double lidar_transform_x =
+            this->declare_parameter<double>("lidar_transform_x", 0.0);
+        const double lidar_transform_y =
+            this->declare_parameter<double>("lidar_transform_y", 0.0);
+        const double lidar_transform_z =
+            this->declare_parameter<double>("lidar_transform_z", 0.0);
+        const double lidar_transform_roll =
+            this->declare_parameter<double>("lidar_transform_roll", 0.0);
+        const double lidar_transform_pitch =
+            this->declare_parameter<double>("lidar_transform_pitch", 0.0);
+        const double lidar_transform_yaw =
+            this->declare_parameter<double>("lidar_transform_yaw", 0.0);
+        tf2::Quaternion lidar_transform_quat;
+        lidar_transform_quat.setRPY(
+            lidar_transform_roll,
+            lidar_transform_pitch,
+            lidar_transform_yaw);
+        lidar_output_transform_.setOrigin(
+            tf2::Vector3(
+                lidar_transform_x,
+                lidar_transform_y,
+                lidar_transform_z));
+        lidar_output_transform_.setRotation(lidar_transform_quat);
+        transform_lidar_points_ =
+            std::abs(lidar_transform_x) > 1e-9 ||
+            std::abs(lidar_transform_y) > 1e-9 ||
+            std::abs(lidar_transform_z) > 1e-9 ||
+            std::abs(lidar_transform_roll) > 1e-9 ||
+            std::abs(lidar_transform_pitch) > 1e-9 ||
+            std::abs(lidar_transform_yaw) > 1e-9;
+
         // init the Go2 the sports client
         this->sport_client_.SetTimeout(10.0f);
         this->sport_client_.Init();
@@ -228,6 +262,9 @@ private:
     rclcpp::Publisher<go2_msgs::msg::MotorStatusArray>::SharedPtr motor_state_pub_;
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr comm_ok_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr faults_raw_pub_;
+    std::string lidar_frame_id_;
+    tf2::Transform lidar_output_transform_;
+    bool transform_lidar_points_{false};
 
     // the variable for the communication check
     std::atomic<int64_t> last_high_rx_ns_{0};
@@ -337,7 +374,7 @@ private:
     {
         const auto* dds_msg = static_cast<const sensor_msgs::msg::dds_::PointCloud2_*>(message);
         sensor_msgs::msg::PointCloud2 ros_msg;
-        ros_msg.header.frame_id = "utlidar";
+        ros_msg.header.frame_id = lidar_frame_id_;
         ros_msg.header.stamp = this->get_clock()->now();
 
         ros_msg.height = dds_msg->height();
@@ -358,6 +395,19 @@ private:
             ros_field.datatype =  static_cast<decltype(ros_field.datatype)>(dds_field.datatype());
             ros_field.count = static_cast<uint32_t>(dds_field.count());
             ros_msg.fields.push_back(ros_field);
+        }
+
+        if (transform_lidar_points_) {
+            sensor_msgs::PointCloud2Iterator<float> iter_x(ros_msg, "x");
+            sensor_msgs::PointCloud2Iterator<float> iter_y(ros_msg, "y");
+            sensor_msgs::PointCloud2Iterator<float> iter_z(ros_msg, "z");
+            for (; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z) {
+                tf2::Vector3 point(*iter_x, *iter_y, *iter_z);
+                point = lidar_output_transform_ * point;
+                *iter_x = static_cast<float>(point.x());
+                *iter_y = static_cast<float>(point.y());
+                *iter_z = static_cast<float>(point.z());
+            }
         }
 
         this->lidar_pub_->publish(ros_msg);

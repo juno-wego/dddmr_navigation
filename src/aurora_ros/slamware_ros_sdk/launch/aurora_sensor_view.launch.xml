@@ -1,0 +1,25 @@
+<launch>
+  <arg name="ip_address" default="192.168.11.1" />
+  <arg name="start_server" default="true" />
+  <arg name="rviz" default="true" />
+
+  <set_env name="LIBGL_ALWAYS_SOFTWARE" value="1" />
+  <set_env name="QT_X11_NO_MITSHM" value="1" />
+  <set_env name="QT_OPENGL" value="software" />
+  <set_env name="QT_QUICK_BACKEND" value="software" />
+  <set_env name="MESA_LOADER_DRIVER_OVERRIDE" value="llvmpipe" />
+
+  <include
+    file="$(find-pkg-share slamware_ros_sdk)/launch/slamware_ros_sdk_server_node.xml"
+    if="$(var start_server)">
+    <arg name="ip_address" value="$(var ip_address)" />
+  </include>
+
+  <node
+    pkg="rviz2"
+    exec="rviz2"
+    name="aurora_sensor_view_rviz"
+    output="screen"
+    args="-d $(find-pkg-share slamware_ros_sdk)/rviz/aurora_sensor_view.rviz"
+    if="$(var rviz)" />
+</launch>

@@ -16,13 +16,18 @@
 #include "tf2_ros/static_transform_broadcaster.h"
 
 // ros
+#if __has_include(<cv_bridge/cv_bridge.hpp>)
+#include <cv_bridge/cv_bridge.hpp>
+#else
 #include <cv_bridge/cv_bridge.h>
+#endif
 
 #include <opencv2/core/core.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/opencv.hpp>
 
 #include <filesystem>
+#include <mutex>
 
 // omp voxel
 #include "dddmr_pcl/voxel_omp/voxel_grid_omp.h"
@@ -58,6 +63,9 @@ class ImageProjection : public rclcpp::Node
     void findStartEndAngle();
     void resetParameters();
     void projectPointCloud();
+    void buildUnorganizedCloudProjection();
+    void groundSourceHandler(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
+    bool replaceGroundWithExternalSource();
     void zPitchRollFeatureRemoval();
     void cloudSegmentation();
     void labelComponents(int row, int col);
@@ -97,6 +105,12 @@ class ImageProjection : public rclcpp::Node
     Channel<ProjectionOut>& _output_channel;
 
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr _sub_laser_cloud;
+    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr ground_source_sub_;
+    rclcpp::CallbackGroup::SharedPtr ground_source_group_;
+    pcl::PointCloud<PointType>::Ptr external_ground_source_;
+    std::mutex external_ground_mutex_;
+    std::string external_ground_topic_;
+    std::string external_ground_frame_;
 
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr _pub_full_info_cloud;
 
@@ -163,6 +177,12 @@ class ImageProjection : public rclcpp::Node
     double ignore_negative_stop_;
 
     bool use_sensor_height_to_filter_out_ground_;
+    bool unorganized_cloud_mode_;
+    int unorganized_ground_ring_count_;
+    double unorganized_ground_min_z_;
+    double unorganized_ground_max_z_;
+    double unorganized_ground_max_radius_;
+    int unorganized_ground_edge_stride_;
     
 #ifdef TRT_ENABLED
     std::shared_ptr<YoloV8> yolov8_;
