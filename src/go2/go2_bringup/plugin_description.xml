@@ -1,0 +1,5 @@
+<library path="libgo2_lidar_tf_tuner_panel">
+  <class name="go2_bringup/LidarTFTunerPanel" type="go2_bringup::LidarTFTunerPanel" base_class_type="rviz_common::Panel">
+    <description>Live TF tuner for Go2 UT LiDAR and Livox MID360 frames.</description>
+  </class>
+</library>

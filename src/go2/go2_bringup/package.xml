@@ -1,0 +1,37 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>go2_bringup</name>
+  <version>0.0.0</version>
+  <description>Bringup launch files for Go2 sensors with Aurora odometry.</description>
+  <maintainer email="wego@todo.todo">wego</maintainer>
+  <license>TODO</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <build_depend>qtbase5-dev</build_depend>
+  <build_depend>qt5-qmake</build_depend>
+  <exec_depend>libqt5-core</exec_depend>
+  <exec_depend>libqt5-widgets</exec_depend>
+
+  <exec_depend>ament_index_python</exec_depend>
+  <depend>geometry_msgs</depend>
+  <exec_depend>go2_base</exec_depend>
+  <exec_depend>go2_description</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>livox_ros_driver2</exec_depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <depend>rviz_common</depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>slamware_ros_sdk</exec_depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+
+  <export>
+    <rviz plugin="plugin_description.xml"/>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

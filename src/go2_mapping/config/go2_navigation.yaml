@@ -1,0 +1,397 @@
+# go2_navigation.yaml
+# ---------------------
+# Configuration for real Go2 autonomous navigation using a previously
+# saved LeGO-LOAM pose graph.
+#
+# Used by: go2_navigation.launch.py
+#
+# Key differences vs. go2_localization.yaml (which targets a Gazebo sim):
+#   - use_sim_time is false throughout
+#   - base_ground_frame is base_footprint (matches real robot TF tree)
+#   - unorganized_cloud_mode enabled for utlidar / mid360 point clouds
+#   - sub_maps.pose_graph_dir is overridden at launch time via the
+#     map_dir argument in go2_navigation.launch.py
+
+# ── Feature extraction (MCL variant of ImageProjection) ────────────────
+mcl_ip:
+  ros__parameters:
+    laser:
+      odom_type: "wheel_odometry"        # MCL 예측에 사용할 odometry 종류: wheel_odometry 또는 laser_odometry
+      base_ground_frame: "base_footprint" # 지면 기준 로봇 프레임. 실제 Go2 TF의 base_footprint와 일치해야 함
+      num_vertical_scans: 16               # LiDAR의 수직 채널 수 또는 가상 수직 분할 수
+      num_horizontal_scans: 440            # 한 회전 스캔을 분할할 수평 bin 수
+      vertical_angle_bottom: -15.0         # 최하단 수직 시야각 [deg]
+      vertical_angle_top: 15.0             # 최상단 수직 시야각 [deg]
+      scan_period: 0.1                     # 한 프레임/회전 스캔의 시간 간격 [s]
+
+    imageProjection:
+      segment_valid_point_num: 5           # 하나의 segment로 인정하기 위한 최소 point 수
+      segment_valid_line_num: 2            # 하나의 segment로 인정하기 위한 최소 수직 line/ring 수
+      segment_theta: 60.0                  # range-image segment 분할의 연결 판단 각도 임계값 [deg]
+      minimum_detection_range: 0.5         # 이 거리보다 가까운 점은 사용하지 않음 [m]
+      maximum_detection_range: 100.0       # 이 거리보다 먼 점은 사용하지 않음 [m]
+      distance_for_patch_between_rings: 1.0 # 인접 ring 간 patch 연결/보정에 사용하는 거리 기준 [m]
+      stitcher_num: 0                      # 여러 sub-scan 결합 수. 일반 spinning LiDAR는 0, Mid-360 계열은 보통 2~4
+      trt_model_path: ""                   # TensorRT 기반 추론 모델 경로. 비어 있으면 해당 모델을 사용하지 않음
+      projected_image_stack_size: 1        # 투영 range image를 시간적으로 누적하는 프레임 수
+      unorganized_cloud_mode: true         # organized ring 정보가 없는 UT-LiDAR/MID360 point cloud 처리 모드 활성화
+      unorganized_ground_ring_count: 3     # unorganized cloud에서 지면 판정에 사용할 하단 가상 ring 수
+      unorganized_ground_min_z: -0.20      # 센서 기준 지면 후보의 최소 z 범위 [m]
+      unorganized_ground_max_z: 0.20       # 센서 기준 지면 후보의 최대 z 범위 [m]
+      unorganized_ground_max_radius: 1.0   # 근거리 지면 기준면 추정에 사용할 최대 반경 [m]
+      unorganized_ground_edge_stride: 12   # unorganized cloud edge feature를 샘플링하는 간격
+
+      ground_fov_bottom: -0.2617994        # 지면 판정에 사용할 수직 FOV 하한 [rad], -15 deg
+      ground_fov_top: -0.087266            # 지면 판정에 사용할 수직 FOV 상한 [rad], 약 -5 deg
+      ground_positive_start: 0.0           # 양의 yaw 방향에서 지면 처리 시작 방위각 [rad]
+      ground_positive_stop: 3.1415926      # 양의 yaw 방향에서 지면 처리 종료 방위각 [rad], +pi
+      ground_negative_start: 0.0           # 음의 yaw 방향에서 지면 처리 시작 방위각 [rad]
+      ground_negative_stop: -3.1415926     # 음의 yaw 방향에서 지면 처리 종료 방위각 [rad], -pi
+
+# ── Feature association (localization-only, no map optimization) ────────
+mcl_fa:
+  ros__parameters:
+    featureAssociation:
+      edge_threshold: 0.1                  # edge feature로 채택하기 위한 curvature/score 임계값
+      surf_threshold: 0.1                  # surface feature로 채택하기 위한 curvature/score 임계값
+      nearest_feature_search_distance: 3.0 # 지도 feature 최근접 탐색 최대 거리 [m]
+    mapping:
+      to_map_optimization: false           # false: localization 전용. 저장 지도를 다시 최적화하거나 수정하지 않음
+
+# ── Sub-maps (pose-graph loader) ────────────────────────────────────────
+sub_maps:
+  ros__parameters:
+    # Overridden at launch time by the map_dir argument.
+    pose_graph_dir: ""                     # pose graph 저장 경로. go2_navigation.launch.py의 map_dir 인자로 런치 시 덮어씀
+    sub_map_search_radius: 50.0            # 현재 위치 주변에서 활성 sub-map을 검색하는 반경 [m]
+    sub_map_warmup_trigger_distance: 20.0  # 이 거리만큼 이동하면 다음 sub-map을 미리 로딩하기 시작 [m]
+    complete_map_voxel_size: 0.4           # 전체 지도 시각화/처리용 voxel downsampling 해상도 [m]
+
+# ── MCL 3DL particle filter ─────────────────────────────────────────────
+mcl_3dl:
+  ros__parameters:
+    init_x: 0.0                            # 초기 위치 x [m], map frame 기준
+    init_y: 0.0                            # 초기 위치 y [m], map frame 기준
+    init_z: 0.0                            # 초기 위치 z [m], map frame 기준
+    init_roll: 0.0                         # 초기 자세 roll [rad]
+    init_pitch: 0.0                        # 초기 자세 pitch [rad]
+    init_yaw: 0.0                          # 초기 자세 yaw [rad]
+    init_var_x: 2.0                        # 초기 particle 분포의 x 분산/확산 크기
+    init_var_y: 2.0                        # 초기 particle 분포의 y 분산/확산 크기
+    init_var_z: 0.5                        # 초기 particle 분포의 z 분산/확산 크기
+    init_var_roll: 0.1                     # 초기 particle 분포의 roll 분산/확산 크기
+    init_var_pitch: 0.1                    # 초기 particle 분포의 pitch 분산/확산 크기
+    init_var_yaw: 0.5                      # 초기 particle 분포의 yaw 분산/확산 크기
+    map_frame: "map"                       # 전역 지도 좌표계 이름
+    robot_frame: "base_footprint"          # MCL 추정 기준. Aurora→Go2 TF가 연결된 실제 robot ground frame과 통일
+    odom_frame: "aurora_odom"              # 단기 odometry 좌표계. Aurora odometry TF와 일치해야 함
+    map_downsample_x: 0.1                  # 정합용 map cloud의 x축 downsampling 해상도 [m]
+    map_downsample_y: 0.1                  # 정합용 map cloud의 y축 downsampling 해상도 [m]
+    map_downsample_z: 0.1                  # 정합용 map cloud의 z축 downsampling 해상도 [m]
+    map_update_interval_sec: 2             # map/sub-map 갱신 주기 [s]
+    num_particles: 100                     # 원본 유지: TF publish 지연과 RViz queue overflow를 피함
+
+    resample_var_x: 0.2                   # resampling 시 x 방향에 주입하는 noise 크기
+    resample_var_y: 0.2                   # resampling 시 y 방향에 주입하는 noise 크기
+    resample_var_z: 0.2                   # resampling 시 z 방향에 주입하는 noise 크기
+    resample_var_yaw: 0.1                 # resampling 시 yaw에 주입하는 noise 크기
+    resample_var_pitch: 0.2               # resampling 시 pitch에 주입하는 noise 크기
+    resample_var_roll: 0.2                # resampling 시 roll에 주입하는 noise 크기
+    expansion_var_x: 0.5                  # 정합 실패 시 x 방향 재탐색 범위 소폭 확대 [m]
+    expansion_var_y: 0.5                  # 정합 실패 시 y 방향 재탐색 범위 소폭 확대 [m]
+    expansion_var_z: 0.5                  # 정합 실패 시 z 방향 재탐색 범위 소폭 확대 [m]
+    expansion_var_roll: 0.2               # 정합 실패 시 roll 방향 재탐색 범위 소폭 확대 [rad]
+    expansion_var_pitch: 0.2              # 정합 실패 시 pitch 방향 재탐색 범위 소폭 확대 [rad]
+    expansion_var_yaw: 0.2                # 정합 실패 시 yaw 방향 재탐색 범위 소폭 확대 [rad]
+    match_ratio_thresh: 0.0               # 최고 match ratio가 25% 미만이면 expansion reset 실행
+
+    euc_cluster_distance: 0.8              # particle/후보군 군집화의 유클리드 거리 임계값 [m]
+    euc_cluster_min_size: 3                # 유효 cluster의 최소 point/particle 수
+    euc_cluster_max_size: 2400             # 유효 cluster의 최대 point/particle 수
+
+    knn_num_of_ground_normals: 20          # 지면 normal 계산에 사용할 최근접 이웃 수
+
+    update_min_d: 0.1                      # 이 거리 이상 이동했을 때 measurement update 수행 [m]
+    update_min_a: 0.1                      # 이 각도 이상 회전했을 때 measurement update 수행 [rad]
+
+    odom_err_lin_lin: 0.6                  # 선형 이동이 선형 위치 오차로 전이되는 odometry noise 계수
+    odom_err_lin_ang: 0.3                  # 선형 이동이 각도 오차로 전이되는 odometry noise 계수
+    odom_err_ang_lin: 0.3                  # 회전이 선형 위치 오차로 전이되는 odometry noise 계수
+    odom_err_ang_ang: 0.6                  # 회전이 각도 오차로 전이되는 odometry noise 계수
+
+    odom_err_integ_lin_tc: 5.0             # 선형 odometry 오차 적분/감쇠 time constant [s]
+    odom_err_integ_ang_tc: 10.0            # 각도 odometry 오차 적분/감쇠 time constant [s]
+
+    lpf_step: 2.0                          # localization pose 저역통과필터의 보정 step/완화 계수
+    acc_lpf_step: 128.0                    # 누적/가속 상태에 적용하는 저역통과필터 step/완화 계수
+    jump_dist: 1.20                             # 1.2 m 이상 correction은 TF LPF를 우회하여 즉시 반영
+    jump_ang: 1.00                              # 약 57° 이상 correction은 TF LPF를 우회하여 즉시 반영
+
+    bias_var_dist: 2.0                     # 장기 거리 drift/bias를 허용하는 분산 크기
+    bias_var_ang: 1.57                     # 장기 각도 drift/bias를 허용하는 분산 크기 [rad]
+    tf_tolerance: 0.1                      # publish하는 TF의 허용 시간 오차 [s]
+    publish_tf: true                       # true: MCL localization 결과 TF를 publish
+
+    likelihood:
+      num_points_global: 8                 # 전역 정합 likelihood 계산에 사용할 point 수 또는 point sampling 수
+      match_dist_min: 0.35                 # 초기 위치 오차를 허용할 point-to-map 매칭 거리 [m]
+      match_dist_flat: 0.05                # 평탄 지면의 tighter match 거리 기준 [m]
+      threshold_for_trusted_ground: 6      # 지면을 신뢰할 수 있다고 판단하기 위한 관측/매칭 임계값
+      radius_of_ground_search: 1.0         # 지면 후보를 탐색하는 반경 [m]
+
+# ── p2p_move_base ──────────────────────────────────────────────────────
+p2p_move_base:
+  ros__parameters:
+    controller_frequency: 20.0             # local controller 실행 주기 [Hz]
+    planner_patience: 999999.0             # global plan 생성 실패를 허용하고 재시도하는 최대 시간 [s]
+    oscillation_distance: 5.0              # 이 거리 이내에서 반복 왕복하면 oscillation 판단에 사용하는 거리 [m]
+    oscillation_angle: 1.0                 # 이 각도 범위에서 반복 회전하면 oscillation 판단에 사용하는 각도 [rad]
+    oscillation_patience: 0.0              # oscillation 상태를 허용하는 시간 [s], 0이면 즉시 판단
+    controller_patience: 999999.0          # local controller 실패를 허용하고 재시도하는 최대 시간 [s]
+    no_plan_retry_num: 10                  # plan이 없을 때 재계획을 시도하는 횟수
+    waiting_patience: 10.0                 # 일시 대기 상태를 허용하는 최대 시간 [s]
+    use_recovery_behaviors: false          # false: recovery behavior를 자동 실행하지 않음
+
+global_plan_manager:
+  ros__parameters:
+    global_planner_action_name: "get_plan" # 호출할 global planner action 이름
+    global_plan_query_frequency: 1.0        # global plan 상태/재계획 요청 확인 주기 [Hz]
+
+# ── Local planner ───────────────────────────────────────────────────────
+local_planner:
+  ros__parameters:
+    odom_topic: odom                       # local planner가 구독할 odometry topic 이름
+    forward_prune: 3.0                     # 현재 로봇 앞쪽으로 남길 전역 경로 길이 [m]
+    backward_prune: 1.0                    # 현재 로봇 뒤쪽으로 남길 전역 경로 길이 [m]
+    heading_tracking_distance: 0.8         # 진행 방향을 경로 heading에 맞추기 시작하는 look-ahead 거리 [m]
+    heading_align_angle: 0.7               # heading 정렬 동작을 강하게 적용하는 각도 오차 기준 [rad]
+    prune_plane_timeout: 6.0               # 경로 pruning/plane 정보가 갱신되지 않아도 유지하는 최대 시간 [s]
+    xy_goal_tolerance: 1.0                 # goal 도착으로 인정하는 xy 위치 오차 [m]
+    yaw_goal_tolerance: 0.785              # goal 도착으로 인정하는 yaw 오차 [rad], 약 45 deg
+    controller_frequency: 10.0             # local planner 제어 출력 갱신 주기 [Hz]
+
+    cuboid:
+      flb: [0.42, 0.36, 0.0]               # front-left-bottom: 전방 좌측 하단 꼭짓점 [m]
+      frb: [0.42, -0.36, 0.0]              # front-right-bottom: 전방 우측 하단 꼭짓점 [m]
+      flt: [0.42, 0.36, 0.6]               # front-left-top: 전방 좌측 상단 꼭짓점 [m]
+      frt: [0.42, -0.36, 0.6]              # front-right-top: 전방 우측 상단 꼭짓점 [m]
+      blb: [-0.35, 0.36, 0.0]              # back-left-bottom: 후방 좌측 하단 꼭짓점 [m]
+      brb: [-0.35, -0.36, 0.0]             # back-right-bottom: 후방 우측 하단 꼭짓점 [m]
+      blt: [-0.35, 0.36, 0.6]              # back-left-top: 후방 좌측 상단 꼭짓점 [m]
+      brt: [-0.35, -0.36, 0.6]             # back-right-top: 후방 우측 상단 꼭짓점 [m]
+
+# ── Recovery behaviors ─────────────────────────────────────────────────
+recovery_behaviors:
+  ros__parameters:
+    plugins: ["rotate_inplace"]            # 로드할 recovery behavior 플러그인 목록
+    rotate_inplace:
+      plugin: "recovery_behaviors::RotateInPlaceBehavior" # 제자리 회전 recovery behavior 구현체
+      frequency: 10.0                       # recovery 제어 명령 갱신 주기 [Hz]
+      tolerance: 0.3                        # recovery 완료/오차 허용 기준
+      trajectory_generator_name: "differential_drive_rotate_inplace" # recovery에 사용할 trajectory generator 이름
+      cmd_vel_topic: "/recovery_cmd_vel"   # recovery 동작이 출력할 velocity command topic
+
+# ── Trajectory generators ──────────────────────────────────────────────
+trajectory_generators:
+  ros__parameters:
+    plugins:
+      - "differential_drive_simple"         # 일반 전진/회전 후보 궤적 생성기
+      - "differential_drive_rotate_inplace" # 제자리 회전 후보 궤적 생성기
+      - "differential_drive_rotate_shortest_angle" # goal을 향한 최단 방향 제자리 회전 생성기
+
+    differential_drive_rotate_shortest_angle:
+      plugin: "trajectory_generators::DDRotateInplaceTheory" # 최단 yaw 방향으로 제자리 회전하는 generator 구현체
+      controller_frequency: 10.0             # generator 계산/출력 갱신 주기 [Hz]
+      rotation_speed: 0.5                    # 제자리 회전 각속도 [rad/s]
+      # 충돌 판정용 로봇 외형 직육면체. 각 점은 base_link 기준 [x, y, z]입니다.
+      cuboid:
+        flb: [0.42, 0.36, 0.0]               # 전방 좌측 하단 꼭짓점 [m]
+        frb: [0.42, -0.36, 0.0]              # 전방 우측 하단 꼭짓점 [m]
+        flt: [0.42, 0.36, 0.6]               # 전방 좌측 상단 꼭짓점 [m]
+        frt: [0.42, -0.36, 0.6]              # 전방 우측 상단 꼭짓점 [m]
+        blb: [-0.35, 0.36, 0.0]              # 후방 좌측 하단 꼭짓점 [m]
+        brb: [-0.35, -0.36, 0.0]             # 후방 우측 하단 꼭짓점 [m]
+        blt: [-0.35, 0.36, 0.6]              # 후방 좌측 상단 꼭짓점 [m]
+        brt: [-0.35, -0.36, 0.6]             # 후방 우측 상단 꼭짓점 [m]
+
+    differential_drive_rotate_inplace:
+      plugin: "trajectory_generators::DDRotateInplaceTheory" # 일반 제자리 회전 generator 구현체
+      controller_frequency: 10.0             # generator 계산/출력 갱신 주기 [Hz]
+      rotation_speed: 0.5                    # 제자리 회전 각속도 [rad/s]
+      # 충돌 판정용 로봇 외형 직육면체. 각 점은 base_link 기준 [x, y, z]입니다.
+      cuboid:
+        flb: [0.42, 0.36, 0.0]               # 전방 좌측 하단 꼭짓점 [m]
+        frb: [0.42, -0.36, 0.0]              # 전방 우측 하단 꼭짓점 [m]
+        flt: [0.42, 0.36, 0.6]               # 전방 좌측 상단 꼭짓점 [m]
+        frt: [0.42, -0.36, 0.6]              # 전방 우측 상단 꼭짓점 [m]
+        blb: [-0.35, 0.36, 0.0]              # 후방 좌측 하단 꼭짓점 [m]
+        brb: [-0.35, -0.36, 0.0]             # 후방 우측 하단 꼭짓점 [m]
+        blt: [-0.35, 0.36, 0.6]              # 후방 좌측 상단 꼭짓점 [m]
+        brt: [-0.35, -0.36, 0.6]             # 후방 우측 상단 꼭짓점 [m]
+
+    differential_drive_simple:
+      plugin: "trajectory_generators::DDSimpleTrajectoryGeneratorTheory" # 전진과 곡선 주행 후보를 생성하는 generator 구현체
+      max_vel_x: 0.45                       # 허용할 최대 전진 속도 [m/s]
+      min_vel_x: 0.12                       # 허용할 최소 전진 속도 [m/s]
+      max_vel_theta: 0.35                   # 허용할 최대 회전 속도 [rad/s]
+      min_vel_theta: 0.12                   # 허용할 최소 회전 속도 [rad/s]
+      acc_lim_x: 0.8                        # 전진 속도 가속도 제한 [m/s²]
+      acc_lim_theta: 0.8                    # 회전 속도 각가속도 제한 [rad/s²]
+      deceleration_ratio: 2.0               # 감속 한계를 가속 한계 대비 크게 적용하는 비율
+      max_motor_shaft_rpm: 3000.0           # 구동 모터 shaft 최대 회전수 [RPM]
+      wheel_diameter: 0.16                  # differential-drive 환산에 사용하는 가상 wheel 직경 [m]
+      gear_ratio: 1.0                       # 모터 축과 가상 wheel 사이의 기어비
+      robot_radius: 0.25                    # 간략 충돌/회전 계산에 사용하는 로봇 반경 [m]
+      controller_frequency: 10.0            # 후보 trajectory 계산 주기 [Hz]
+      sim_time: 1.0                         # 각 후보 속도 명령을 forward simulate할 시간 길이 [s]
+      linear_x_sample: 5.0                  # 전진 속도 축에서 생성할 후보 수
+      angular_z_sample: 8.0                 # 회전 속도 축에서 생성할 후보 수
+      sim_granularity: 0.05                 # 전진 시뮬레이션의 공간/시간 분해능 기준
+      angular_sim_granularity: 0.025        # 회전 시뮬레이션의 각도 분해능 기준 [rad]
+      cuboid:
+        flb: [0.42, 0.36, 0.0]               # 전방 좌측 하단 꼭짓점 [m]
+        frb: [0.42, -0.36, 0.0]              # 전방 우측 하단 꼭짓점 [m]
+        flt: [0.42, 0.36, 0.6]               # 전방 좌측 상단 꼭짓점 [m]
+        frt: [0.42, -0.36, 0.6]              # 전방 우측 상단 꼭짓점 [m]
+        blb: [-0.35, 0.36, 0.0]              # 후방 좌측 하단 꼭짓점 [m]
+        brb: [-0.35, -0.36, 0.0]             # 후방 우측 하단 꼭짓점 [m]
+        blt: [-0.35, 0.36, 0.6]              # 후방 좌측 상단 꼭짓점 [m]
+        brt: [-0.35, -0.36, 0.6]             # 후방 우측 상단 꼭짓점 [m]
+
+# ── MPC critics ────────────────────────────────────────────────────────
+mpc_critics:
+  ros__parameters:
+    plugins:
+      - "collision"                        # 전진 trajectory의 충돌 비용 critic
+      - "stick_path"                       # 경로 이탈 억제 critic
+      - "pure_pursuit"                     # look-ahead target 추종 critic
+      - "toward_global_plan"               # 전역 경로 방향으로 진행시키는 critic
+      - "collision_rotate"                 # 일반 제자리 회전 trajectory의 충돌 비용 critic
+      - "collision_rotate_shortest"        # 최단 방향 제자리 회전 trajectory의 충돌 비용 critic
+      - "prefer_rotate_shortest"           # 최단 방향 회전을 우선하는 critic
+    collision:
+      plugin: "mpc_critics::CollisionModel" # trajectory와 obstacle/costmap의 충돌 비용 모델
+      trajectory_generator: differential_drive_simple # 이 critic이 평가할 trajectory generator 이름
+      weight: 1.0                            # collision cost 가중치
+    stick_path:
+      plugin: "mpc_critics::StickPathModel" # 전역 경로에서 벗어나는 정도를 비용으로 계산
+      trajectory_generator: differential_drive_simple # 이 critic이 평가할 trajectory generator 이름
+      weight: 0.1                            # path stickiness cost 가중치
+    pure_pursuit:
+      plugin: "mpc_critics::PurePursuitModel" # look-ahead point를 향한 추종 비용 모델
+      trajectory_generator: differential_drive_simple # 이 critic이 평가할 trajectory generator 이름
+      translation_weight: 1.0                # look-ahead 위치 오차 비용 가중치
+      orientation_weight: 0.01               # look-ahead 자세 오차 비용 가중치
+    toward_global_plan:
+      plugin: "mpc_critics::TowardGlobalPlanModel" # trajectory 진행 방향과 global plan 방향의 일치 비용 모델
+      trajectory_generator: differential_drive_simple # 이 critic이 평가할 trajectory generator 이름
+      weight: 1.0                            # global plan 진행 방향 비용 가중치
+    collision_rotate:
+      plugin: "mpc_critics::CollisionModel" # 제자리 회전 중 충돌 비용 모델
+      trajectory_generator: differential_drive_rotate_inplace # 이 critic이 평가할 trajectory generator 이름
+      weight: 1.0                            # collision cost 가중치
+    collision_rotate_shortest:
+      plugin: "mpc_critics::CollisionModel" # 최단 방향 제자리 회전 중 충돌 비용 모델
+      trajectory_generator: differential_drive_rotate_shortest_angle # 이 critic이 평가할 trajectory generator 이름
+      weight: 1.0                            # collision cost 가중치
+    prefer_rotate_shortest:
+      plugin: "mpc_critics::ShortestAngleModel" # 목표 yaw까지의 회전 방향/각도를 비용으로 계산
+      trajectory_generator: differential_drive_rotate_shortest_angle # 이 critic이 평가할 trajectory generator 이름
+      weight: 1.0                            # shortest-angle preference 가중치
+
+# ── Perception 3D (local costmap) ──────────────────────────────────────
+perception_3d_local:
+  ros__parameters:
+    global_frame: "map"                     # local perception 결과가 표현되는 전역 좌표계
+    robot_base_frame: "base_footprint" # MCL 및 point-cloud frame과 통일
+    max_obstacle_distance: 9999.0           # obstacle로 유지할 최대 거리 [m]
+    inscribed_radius: 0.5                   # 로봇 외형 내부 충돌 판정에 사용하는 inscribed radius [m]
+    inflation_descending_rate: 2.0          # obstacle에서 멀어질수록 inflation cost가 감소하는 비율
+    inflation_radius: 1.5                   # obstacle 주변 cost inflation 반경 [m]
+    sensors_collected_frequency: 10.0       # sensor input을 수집/통합하는 주기 [Hz]
+    plugins: ["map", "path_blocked_strategy", "lidar"] # 사용할 static map, path blockage, LiDAR layer 목록
+    map:
+      plugin: "perception_3d::StaticLayer" # 저장된 지도 기반 정적 obstacle/ground layer 구현체
+      is_local_planner: true                # true: local planner용 layer로 동작
+      mapping_mode: false                   # false: navigation 중 정적 지도를 새로 생성/갱신하지 않음
+      map_topic: "mapcloud"                 # 정적 전체 지도 point cloud topic
+      ground_topic: "mapground"            # 정적 지도에서 ground point cloud topic
+    path_blocked_strategy:
+      plugin: "perception_3d::PathBlockedStrategy" # 현재 경로가 obstacle로 막혔는지 판단하는 전략
+      check_radius: 0.3                     # 경로 막힘 검사 반경 [m]
+    lidar:
+      plugin: "perception_3d::MultiLayerSpinningLidar" # 분할된 LiDAR cloud를 obstacle layer로 변환하는 구현체
+      is_local_planner: true                # true: local planner용 즉시성 obstacle layer로 동작
+      topic: "segmented_cloud_pure"         # 입력으로 사용할 지면/장애물 분할 point cloud topic
+      pub_gbl_marking_for_visualization: false # false: local layer의 global marking visualization publish 비활성화
+      vertical_FOV_top: 15.0                # 사용할 LiDAR 수직 FOV 상단 [deg]
+      vertical_FOV_bottom: -15.0            # 사용할 LiDAR 수직 FOV 하단 [deg]
+      scan_effective_positive_start: 30.0   # 양의 yaw 방향에서 실제 obstacle 처리 시작 방위각 [deg]
+      scan_effective_positive_end: 180.0    # 양의 yaw 방향에서 실제 obstacle 처리 종료 방위각 [deg]
+      scan_effective_negative_start: -30.0  # 음의 yaw 방향에서 실제 obstacle 처리 시작 방위각 [deg]
+      scan_effective_negative_end: -180.0   # 음의 yaw 방향에서 실제 obstacle 처리 종료 방위각 [deg]
+      resolution: 0.05                      # local obstacle grid의 xy 해상도 [m]
+      height_resolution: 0.05               # obstacle voxel/height 축 해상도 [m]
+      marking_height: 2.0                   # obstacle marking에 고려할 최대 높이 [m]
+      perception_window_size: 3.0           # 로봇 주변 local perception window 크기/반경 기준 [m]
+      segmentation_ignore_ratio: 0.5        # segmentation 결과 중 무시할 비율/신뢰도 기준
+      expected_sensor_time: 0.2             # 새 sensor data가 들어와야 한다고 기대하는 최대 시간 간격 [s]
+
+# ── Perception 3D (global costmap) ─────────────────────────────────────
+perception_3d_global:
+  ros__parameters:
+    global_frame: "map"                     # global perception 결과가 표현되는 전역 좌표계
+    robot_base_frame: "base_footprint" # MCL 및 point-cloud frame과 통일
+    max_obstacle_distance: 9999.0           # obstacle로 유지할 최대 거리 [m]
+    inscribed_radius: 0.5                   # 로봇 외형 내부 충돌 판정에 사용하는 inscribed radius [m]
+    inflation_descending_rate: 2.0          # obstacle에서 멀어질수록 inflation cost가 감소하는 비율
+    inflation_radius: 1.5                   # obstacle 주변 cost inflation 반경 [m]
+    sensors_collected_frequency: 10.0       # sensor input을 수집/통합하는 주기 [Hz]
+    plugins: ["map", "lidar"]               # 사용할 static map layer와 LiDAR obstacle layer 목록
+    dgraph_publish_frequency: 1.0           # dynamic graph 또는 global connectivity graph publish 주기 [Hz]
+    map:
+      plugin: "perception_3d::StaticLayer" # 저장된 지도 기반 정적 obstacle/ground layer 구현체
+      is_local_planner: false               # false: global planner용 static layer로 동작
+      use_adaptive_connection: false        # false: 지면 connectivity를 적응형 방식으로 만들지 않음
+      adaptive_connection_number: 20        # adaptive connection 사용 시 각 node의 후보 연결 수
+      radius_of_ground_connection: 1.5      # ground graph node를 연결하는 최대 반경 [m]
+      intensity_search_radius: 3.0          # intensity/feature 기반 주변 정보 탐색 반경 [m]
+      intensity_search_punish_weight: 0.1   # intensity 불일치/불확실성에 부과할 비용 가중치
+      static_imposing_radius: 1.5           # 정적 obstacle/ground constraint를 주변 graph에 강제하는 반경 [m]
+      map_topic: "mapcloud"                 # 정적 전체 지도 point cloud topic
+      ground_topic: "mapground"            # 정적 지도에서 ground point cloud topic
+      support:
+        mapping_mode: false                 # false: global static layer가 navigation 중 지도를 새로 생성/갱신하지 않음
+        enable_edge_detection: true         # true: 지도에서 edge/낙차 경계를 검출하여 통행 불가 요소로 사용
+        generate_static_graph: false        # false: static graph를 별도 생성하지 않음
+    lidar:
+      plugin: "perception_3d::MultiLayerSpinningLidar" # 분할 LiDAR cloud를 global obstacle layer로 변환하는 구현체
+      is_local_planner: false               # false: global planner용 LiDAR layer로 동작
+      topic: "segmented_cloud_pure"         # 입력으로 사용할 지면/장애물 분할 point cloud topic
+      pub_gbl_marking_for_visualization: true # true: global obstacle marking visualization publish 활성화
+      vertical_FOV_top: 15.0                # 사용할 LiDAR 수직 FOV 상단 [deg]
+      vertical_FOV_bottom: -15.0            # 사용할 LiDAR 수직 FOV 하단 [deg]
+      scan_effective_positive_start: 30.0   # 양의 yaw 방향에서 실제 obstacle 처리 시작 방위각 [deg]
+      scan_effective_positive_end: 180.0    # 양의 yaw 방향에서 실제 obstacle 처리 종료 방위각 [deg]
+      scan_effective_negative_start: -30.0  # 음의 yaw 방향에서 실제 obstacle 처리 시작 방위각 [deg]
+      scan_effective_negative_end: -180.0   # 음의 yaw 방향에서 실제 obstacle 처리 종료 방위각 [deg]
+      euclidean_cluster_extraction_tolerance: 0.1 # global obstacle clustering 시 같은 cluster로 묶을 거리 [m]
+      euclidean_cluster_extraction_min_cluster_size: 1 # obstacle cluster로 유지할 최소 point 수
+      xy_resolution: 0.05                   # global obstacle grid의 xy 해상도 [m]
+      height_resolution: 0.05               # obstacle voxel/height 축 해상도 [m]
+      marking_height: 2.0                   # obstacle marking에 고려할 최대 높이 [m]
+      perception_window_size: 5.0           # global LiDAR perception window 크기/반경 기준 [m]
+      segmentation_ignore_ratio: 1.1        # segmentation 결과 중 무시할 비율/신뢰도 기준
+      expected_sensor_time: 0.1             # 새 sensor data가 들어와야 한다고 기대하는 최대 시간 간격 [s]
+
+# ── Global planner ─────────────────────────────────────────────────────
+global_planner:
+  ros__parameters:
+    turning_weight: 0.1                     # 경로 비용에서 회전/방향 전환에 부과하는 가중치
+    enable_detail_log: false                # true일 때 planner 내부 상세 디버그 log 출력
+    find_start_tolerance: 2.0               # 로봇 정확 위치에 graph node가 없을 때 시작 node를 허용하는 검색 거리 [m]
+
+dynamic_window_aware_global_planner:
+  ros__parameters:
+    look_ahead_distance: 2.0                # 현재 위치 앞에서 global planning 판단에 사용할 look-ahead 거리 [m]
+    recompute_frequency: 10.0               # 동적 창/경로 재계산 주기 [Hz]
