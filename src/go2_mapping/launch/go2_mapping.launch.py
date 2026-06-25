@@ -5,6 +5,7 @@ from launch.actions import (
     IncludeLaunchDescription,
     LogInfo,
     SetEnvironmentVariable,
+    TimerAction,
 )
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -19,6 +20,7 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     mapping_share = get_package_share_path("go2_mapping")
+    default_mapping_config = str(mapping_share / "config/go2_real_mapping.yaml")
     mapping_dir = PathJoinSubstitution(
         [EnvironmentVariable("HOME"), "dddmr_navigation", "maps", "go2"]
     )
@@ -59,6 +61,7 @@ def generate_launch_description():
                 "transform_points": True,
             }
         ],
+        condition=IfCondition(LaunchConfiguration("use_cloud_transform")),
     )
 
     pointcloud_merger = Node(
@@ -73,9 +76,13 @@ def generate_launch_description():
                 "output_frame": "base_footprint",
                 "publish_rate": 10.0,
                 "max_cloud_age": 0.2,
-                "max_stamp_skew": 0.12,
+                "max_stamp_skew": 0.25,
+                "odom_topic": LaunchConfiguration("odom_topic"),
+                "output_stamp_source": "odom",
+                "sync_by_arrival_time": True,
             }
         ],
+        condition=IfCondition(LaunchConfiguration("use_mid360")),
     )
 
     lego_loam = Node(
@@ -83,7 +90,7 @@ def generate_launch_description():
         executable="lego_loam",
         output="screen",
         parameters=[
-            str(mapping_share / "config/go2_real_mapping.yaml"),
+            LaunchConfiguration("mapping_config"),
             {
                 "use_sim_time": False,
                 "laser.base_ground_frame": "base_footprint",
@@ -94,6 +101,7 @@ def generate_launch_description():
             ("odom", LaunchConfiguration("odom_topic")),
         ],
     )
+    delayed_lego_loam = TimerAction(period=3.0, actions=[lego_loam])
 
     rviz = Node(
         package="rviz2",
@@ -116,6 +124,11 @@ def generate_launch_description():
             DeclareLaunchArgument("use_mid360", default_value="true"),
             DeclareLaunchArgument("use_go2_camera", default_value="true"),
             DeclareLaunchArgument("rviz", default_value="true"),
+            DeclareLaunchArgument("use_cloud_transform", default_value="true"),
+            DeclareLaunchArgument(
+                "mapping_config",
+                default_value=default_mapping_config,
+            ),
             DeclareLaunchArgument("raw_lidar_topic", default_value="/merged/points"),
             DeclareLaunchArgument("lidar_topic", default_value="/go2/lidar_points_base"),
             DeclareLaunchArgument(
@@ -143,7 +156,7 @@ def generate_launch_description():
             sensors_bringup,
             pointcloud_merger,
             mapping_cloud_transform,
-            lego_loam,
+            delayed_lego_loam,
             rviz,
         ]
     )

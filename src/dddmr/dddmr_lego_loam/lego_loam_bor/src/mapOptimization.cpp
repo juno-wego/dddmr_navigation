@@ -35,6 +35,7 @@
 //      (IROS). October 2018.
 
 #include "mapOptimization.h"
+#include <algorithm>
 #include <future>
 
 using namespace gtsam;
@@ -152,6 +153,38 @@ MapOptimization::MapOptimization(std::string name,
   declare_parameter("mapping.history_keyframe_fitness_score", rclcpp::ParameterValue(0.0));
   this->get_parameter("mapping.history_keyframe_fitness_score", _history_keyframe_fitness_score);
   RCLCPP_INFO(this->get_logger(), "mapping.history_keyframe_fitness_score: %.2f", _history_keyframe_fitness_score);
+
+  declare_parameter("mapping.loop_candidate_min_accumulated_distance",
+                    rclcpp::ParameterValue(20.0));
+  this->get_parameter("mapping.loop_candidate_min_accumulated_distance",
+                      _loop_candidate_min_accumulated_distance);
+  RCLCPP_INFO(this->get_logger(),
+              "mapping.loop_candidate_min_accumulated_distance: %.2f",
+              _loop_candidate_min_accumulated_distance);
+
+  declare_parameter("mapping.loop_candidate_min_index_gap",
+                    rclcpp::ParameterValue(200));
+  this->get_parameter("mapping.loop_candidate_min_index_gap",
+                      _loop_candidate_min_index_gap);
+  RCLCPP_INFO(this->get_logger(),
+              "mapping.loop_candidate_min_index_gap: %d",
+              _loop_candidate_min_index_gap);
+
+  declare_parameter("mapping.loop_cluster_guard_max_distance",
+                    rclcpp::ParameterValue(1.0));
+  this->get_parameter("mapping.loop_cluster_guard_max_distance",
+                      _loop_cluster_guard_max_distance);
+  RCLCPP_INFO(this->get_logger(),
+              "mapping.loop_cluster_guard_max_distance: %.2f",
+              _loop_cluster_guard_max_distance);
+
+  declare_parameter("mapping.loop_icp_min_correspondence_distance",
+                    rclcpp::ParameterValue(2.0));
+  this->get_parameter("mapping.loop_icp_min_correspondence_distance",
+                      _loop_icp_min_correspondence_distance);
+  RCLCPP_INFO(this->get_logger(),
+              "mapping.loop_icp_min_correspondence_distance: %.2f",
+              _loop_icp_min_correspondence_distance);
 
   declare_parameter("mapping.surrounding_keyframe_search_num", rclcpp::ParameterValue(0));
   this->get_parameter("mapping.surrounding_keyframe_search_num", _surrounding_keyframe_search_num);
@@ -1022,7 +1055,7 @@ bool MapOptimization::detectLoopClosure() {
       ref_pt = cloudKeyPoses6D->points[j];
     }
 
-    if(accumulated_distance>20.0){
+    if (accumulated_distance > _loop_candidate_min_accumulated_distance) {
       loop_closure_candidates.push_back(std::make_pair((cloudKeyPoses6D->points.size()-id), d_distance));
     }
 
@@ -1092,11 +1125,15 @@ bool MapOptimization::detectLoopClosure() {
     double dx = cloudKeyPoses6D->points[latestFrameIDLoopCloure].x - cloudKeyPoses6D->points[closestHistoryFrameID].x;
     double dy = cloudKeyPoses6D->points[latestFrameIDLoopCloure].y - cloudKeyPoses6D->points[closestHistoryFrameID].y;
     double dz = cloudKeyPoses6D->points[latestFrameIDLoopCloure].z - cloudKeyPoses6D->points[closestHistoryFrameID].z;
-    if(sqrt(dx*dx+dy*dy+dz*dz)<1.0){
+    if (sqrt(dx * dx + dy * dy + dz * dz) < _loop_cluster_guard_max_distance) {
 
     }
     else{
-      RCLCPP_WARN(this->get_logger(), "Too clustered! In range: %lu points, overall: %lu points. Distance between two frame is higher than 1.0 m, ignore loop closure.", latestSurfKeyFrameCloudBaseLinkFrame_Pass->points.size(), original_size);
+      RCLCPP_WARN(this->get_logger(),
+                  "Too clustered! In range: %lu points, overall: %lu points. "
+                  "Distance between two frames is higher than %.2f m, ignore loop closure.",
+                  latestSurfKeyFrameCloudBaseLinkFrame_Pass->points.size(),
+                  original_size, _loop_cluster_guard_max_distance);
       return false;
     }
 
@@ -1105,7 +1142,8 @@ bool MapOptimization::detectLoopClosure() {
   // check continuity between two frame from current to candidate
   // if continuity is good, we dont need closure, solving spiral up issue
   
-  if(latestFrameIDLoopCloure - closestHistoryFrameID < 200){
+  if (latestFrameIDLoopCloure - closestHistoryFrameID <
+      _loop_candidate_min_index_gap) {
     double height_diff = cloudKeyPoses6D->points[latestFrameIDLoopCloure].y - cloudKeyPoses6D->points[closestHistoryFrameID].y;
     // we need to use path planning to find shortest path
     if(fabs(height_diff)>=2.0){ //wheelchair passage slope is 0.05, max is 0.1
@@ -1211,6 +1249,8 @@ void MapOptimization::performLoopClosure() {
   double correpond_distance = sqrt(tf2_current2closestKeyFrame_.getOrigin().x()*tf2_current2closestKeyFrame_.getOrigin().x()+
   tf2_current2closestKeyFrame_.getOrigin().y()*tf2_current2closestKeyFrame_.getOrigin().y()+
   tf2_current2closestKeyFrame_.getOrigin().z()*tf2_current2closestKeyFrame_.getOrigin().z());
+  correpond_distance =
+      std::max(correpond_distance, _loop_icp_min_correspondence_distance);
 
   icp_opti.SetMaxCorrespondDistance(correpond_distance);
   icp_opti.Match(latestSurfKeyFrameCloud, T_predict, cloud_source_opti_transformed_ptr, T_final);

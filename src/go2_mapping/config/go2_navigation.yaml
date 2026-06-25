@@ -155,7 +155,7 @@ p2p_move_base:
 global_plan_manager:
   ros__parameters:
     global_planner_action_name: "get_plan" # 호출할 global planner action 이름
-    global_plan_query_frequency: 1.0        # global plan 상태/재계획 요청 확인 주기 [Hz]
+    global_plan_query_frequency: -1.0       # 음수: 목표를 새로 줄 때만 전역 경로 생성. 주행 중 잦은 재계획 방지
 
 # ── Local planner ───────────────────────────────────────────────────────
 local_planner:
@@ -163,12 +163,12 @@ local_planner:
     odom_topic: odom                       # local planner가 구독할 odometry topic 이름
     forward_prune: 3.0                     # 현재 로봇 앞쪽으로 남길 전역 경로 길이 [m]
     backward_prune: 1.0                    # 현재 로봇 뒤쪽으로 남길 전역 경로 길이 [m]
-    heading_tracking_distance: 0.8         # 진행 방향을 경로 heading에 맞추기 시작하는 look-ahead 거리 [m]
-    heading_align_angle: 0.7               # heading 정렬 동작을 강하게 적용하는 각도 오차 기준 [rad]
-    prune_plane_timeout: 6.0               # 경로 pruning/plane 정보가 갱신되지 않아도 유지하는 최대 시간 [s]
-    xy_goal_tolerance: 1.0                 # goal 도착으로 인정하는 xy 위치 오차 [m]
-    yaw_goal_tolerance: 0.785              # goal 도착으로 인정하는 yaw 오차 [rad], 약 45 deg
-    controller_frequency: 10.0             # local planner 제어 출력 갱신 주기 [Hz]
+    heading_tracking_distance: 0.5         # 너무 멀리 보지 않고 가까운 경로를 따라가게 함
+    heading_align_angle: 0.5               # 시작 자세 정렬을 덜 과격하게 적용
+    prune_plane_timeout: 3.0               # 오래된 prune plan에 끌려가지 않도록 유지 시간 단축
+    xy_goal_tolerance: 0.35                # goal 판정을 더 타이트하게 해서 중간에 느슨하게 끝나지 않게 함 [m]
+    yaw_goal_tolerance: 0.52               # goal yaw 허용 오차 약 30 deg
+    controller_frequency: 15.0             # 추종 반응성을 약간 높임 [Hz]
 
     cuboid:
       flb: [0.42, 0.36, 0.0]               # front-left-bottom: 전방 좌측 하단 꼭짓점 [m]
@@ -201,7 +201,7 @@ trajectory_generators:
 
     differential_drive_rotate_shortest_angle:
       plugin: "trajectory_generators::DDRotateInplaceTheory" # 최단 yaw 방향으로 제자리 회전하는 generator 구현체
-      controller_frequency: 10.0             # generator 계산/출력 갱신 주기 [Hz]
+      controller_frequency: 15.0             # generator 계산/출력 갱신 주기 [Hz]
       rotation_speed: 0.5                    # 제자리 회전 각속도 [rad/s]
       # 충돌 판정용 로봇 외형 직육면체. 각 점은 base_link 기준 [x, y, z]입니다.
       cuboid:
@@ -216,7 +216,7 @@ trajectory_generators:
 
     differential_drive_rotate_inplace:
       plugin: "trajectory_generators::DDRotateInplaceTheory" # 일반 제자리 회전 generator 구현체
-      controller_frequency: 10.0             # generator 계산/출력 갱신 주기 [Hz]
+      controller_frequency: 15.0             # generator 계산/출력 갱신 주기 [Hz]
       rotation_speed: 0.5                    # 제자리 회전 각속도 [rad/s]
       # 충돌 판정용 로봇 외형 직육면체. 각 점은 base_link 기준 [x, y, z]입니다.
       cuboid:
@@ -231,21 +231,21 @@ trajectory_generators:
 
     differential_drive_simple:
       plugin: "trajectory_generators::DDSimpleTrajectoryGeneratorTheory" # 전진과 곡선 주행 후보를 생성하는 generator 구현체
-      max_vel_x: 0.45                       # 허용할 최대 전진 속도 [m/s]
-      min_vel_x: 0.12                       # 허용할 최소 전진 속도 [m/s]
-      max_vel_theta: 0.35                   # 허용할 최대 회전 속도 [rad/s]
-      min_vel_theta: 0.12                   # 허용할 최소 회전 속도 [rad/s]
-      acc_lim_x: 0.8                        # 전진 속도 가속도 제한 [m/s²]
-      acc_lim_theta: 0.8                    # 회전 속도 각가속도 제한 [rad/s²]
+      max_vel_x: 0.32                       # 직선 속도를 낮춰 overshoot와 경로 이탈 감소 [m/s]
+      min_vel_x: 0.08                       # 저속 추종 허용 [m/s]
+      max_vel_theta: 0.50                   # 코너에서 더 잘 따라가도록 회전 여유 확보 [rad/s]
+      min_vel_theta: 0.08                   # 작은 각도 보정 허용 [rad/s]
+      acc_lim_x: 0.6                        # 급가속 완화 [m/s²]
+      acc_lim_theta: 0.7                    # 급회전 완화 [rad/s²]
       deceleration_ratio: 2.0               # 감속 한계를 가속 한계 대비 크게 적용하는 비율
       max_motor_shaft_rpm: 3000.0           # 구동 모터 shaft 최대 회전수 [RPM]
       wheel_diameter: 0.16                  # differential-drive 환산에 사용하는 가상 wheel 직경 [m]
       gear_ratio: 1.0                       # 모터 축과 가상 wheel 사이의 기어비
       robot_radius: 0.25                    # 간략 충돌/회전 계산에 사용하는 로봇 반경 [m]
-      controller_frequency: 10.0            # 후보 trajectory 계산 주기 [Hz]
-      sim_time: 1.0                         # 각 후보 속도 명령을 forward simulate할 시간 길이 [s]
-      linear_x_sample: 5.0                  # 전진 속도 축에서 생성할 후보 수
-      angular_z_sample: 8.0                 # 회전 속도 축에서 생성할 후보 수
+      controller_frequency: 15.0            # 후보 trajectory 계산 주기 [Hz]
+      sim_time: 0.8                         # 너무 먼 미래보다 짧은 예측으로 경로 급변 감소 [s]
+      linear_x_sample: 6.0                  # 전진 속도 축에서 생성할 후보 수
+      angular_z_sample: 12.0                # 회전 후보를 늘려 좁은 코너 추종 개선
       sim_granularity: 0.05                 # 전진 시뮬레이션의 공간/시간 분해능 기준
       angular_sim_granularity: 0.025        # 회전 시뮬레이션의 각도 분해능 기준 [rad]
       cuboid:
@@ -276,16 +276,16 @@ mpc_critics:
     stick_path:
       plugin: "mpc_critics::StickPathModel" # 전역 경로에서 벗어나는 정도를 비용으로 계산
       trajectory_generator: differential_drive_simple # 이 critic이 평가할 trajectory generator 이름
-      weight: 0.1                            # path stickiness cost 가중치
+      weight: 0.4                            # 경로를 더 강하게 고수
     pure_pursuit:
       plugin: "mpc_critics::PurePursuitModel" # look-ahead point를 향한 추종 비용 모델
       trajectory_generator: differential_drive_simple # 이 critic이 평가할 trajectory generator 이름
       translation_weight: 1.0                # look-ahead 위치 오차 비용 가중치
-      orientation_weight: 0.01               # look-ahead 자세 오차 비용 가중치
+      orientation_weight: 0.05               # heading 오차를 더 반영
     toward_global_plan:
       plugin: "mpc_critics::TowardGlobalPlanModel" # trajectory 진행 방향과 global plan 방향의 일치 비용 모델
       trajectory_generator: differential_drive_simple # 이 critic이 평가할 trajectory generator 이름
-      weight: 1.0                            # global plan 진행 방향 비용 가중치
+      weight: 1.2                            # 진행 방향 일치성 소폭 강화
     collision_rotate:
       plugin: "mpc_critics::CollisionModel" # 제자리 회전 중 충돌 비용 모델
       trajectory_generator: differential_drive_rotate_inplace # 이 critic이 평가할 trajectory generator 이름
@@ -347,17 +347,17 @@ perception_3d_global:
     inflation_descending_rate: 2.0          # obstacle에서 멀어질수록 inflation cost가 감소하는 비율
     inflation_radius: 1.5                   # obstacle 주변 cost inflation 반경 [m]
     sensors_collected_frequency: 10.0       # sensor input을 수집/통합하는 주기 [Hz]
-    plugins: ["map", "lidar"]               # 사용할 static map layer와 LiDAR obstacle layer 목록
-    dgraph_publish_frequency: 1.0           # dynamic graph 또는 global connectivity graph publish 주기 [Hz]
+    plugins: ["map"]                        # 전역 경로는 저장된 정적 지도 위주로 계산해 경로 급변을 줄임
+    dgraph_publish_frequency: 0.5           # dynamic graph 또는 global connectivity graph publish 주기 [Hz]
     map:
       plugin: "perception_3d::StaticLayer" # 저장된 지도 기반 정적 obstacle/ground layer 구현체
       is_local_planner: false               # false: global planner용 static layer로 동작
       use_adaptive_connection: false        # false: 지면 connectivity를 적응형 방식으로 만들지 않음
       adaptive_connection_number: 20        # adaptive connection 사용 시 각 node의 후보 연결 수
-      radius_of_ground_connection: 1.5      # ground graph node를 연결하는 최대 반경 [m]
-      intensity_search_radius: 3.0          # intensity/feature 기반 주변 정보 탐색 반경 [m]
+      radius_of_ground_connection: 1.0      # 과도한 shortcut 연결 방지 [m]
+      intensity_search_radius: 1.0          # 좁은 통로를 잘못 가로지르는 연결 방지 [m]
       intensity_search_punish_weight: 0.1   # intensity 불일치/불확실성에 부과할 비용 가중치
-      static_imposing_radius: 1.5           # 정적 obstacle/ground constraint를 주변 graph에 강제하는 반경 [m]
+      static_imposing_radius: 2.0           # 정적 지도 제약을 더 안정적으로 반영 [m]
       map_topic: "mapcloud"                 # 정적 전체 지도 point cloud topic
       ground_topic: "mapground"            # 정적 지도에서 ground point cloud topic
       support:
@@ -389,9 +389,9 @@ global_planner:
   ros__parameters:
     turning_weight: 0.1                     # 경로 비용에서 회전/방향 전환에 부과하는 가중치
     enable_detail_log: false                # true일 때 planner 내부 상세 디버그 log 출력
-    find_start_tolerance: 2.0               # 로봇 정확 위치에 graph node가 없을 때 시작 node를 허용하는 검색 거리 [m]
+    find_start_tolerance: 1.0               # 시작 위치 snap 허용 반경을 줄여 이상한 우회 시작 방지 [m]
 
 dynamic_window_aware_global_planner:
   ros__parameters:
     look_ahead_distance: 2.0                # 현재 위치 앞에서 global planning 판단에 사용할 look-ahead 거리 [m]
-    recompute_frequency: 10.0               # 동적 창/경로 재계산 주기 [Hz]
+    recompute_frequency: 2.0                # 동적 창/경로 재계산 주기 [Hz]

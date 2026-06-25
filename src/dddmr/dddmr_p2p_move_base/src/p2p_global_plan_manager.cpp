@@ -33,6 +33,8 @@ namespace p2p_move_base
 {
 P2PGlobalPlanManager::P2PGlobalPlanManager(std::string name) : Node(name), name_(name), got_first_goal_(false){
   clock_ = this->get_clock();
+  is_planning_ = false;
+  has_valid_plan_for_goal_ = false;
 }
 
 P2PGlobalPlanManager::~P2PGlobalPlanManager(){
@@ -115,6 +117,15 @@ void P2PGlobalPlanManager::queryThread(){
   if(!got_first_goal_)
     return;
 
+  // In one-shot mode, reuse the current global plan for the same goal instead
+  // of continuously resubmitting identical planning requests.
+  if (global_plan_query_frequency_ <= 0.0 &&
+      has_valid_plan_for_goal_ &&
+      !global_path_.poses.empty() &&
+      sameGoal(goal_, planned_goal_)) {
+    return;
+  }
+
   auto goal_msg = dddmr_sys_core::action::GetPlan::Goal();
   goal_msg.goal = goal_;
   goal_msg.activate_threading = true;
@@ -163,11 +174,22 @@ void P2PGlobalPlanManager::global_planner_client_result_callback(const rclcpp_ac
       break;
   }
   global_path_ = result.result->path;
+  if (result.code == rclcpp_action::ResultCode::SUCCEEDED &&
+      !global_path_.poses.empty()) {
+    planned_goal_ = goal_;
+    has_valid_plan_for_goal_ = true;
+  } else {
+    has_valid_plan_for_goal_ = false;
+  }
   is_planning_ = false;
 }
 
 void P2PGlobalPlanManager::setGoal(const geometry_msgs::msg::PoseStamped& goal){
   std::unique_lock<std::mutex> lock(access_);
+  if (!sameGoal(goal_, goal)) {
+    global_path_.poses.clear();
+    has_valid_plan_for_goal_ = false;
+  }
   goal_ = goal;
   got_first_goal_ = true;
 }
@@ -184,6 +206,19 @@ void P2PGlobalPlanManager::copyPlan(std::vector<geometry_msgs::msg::PoseStamped>
   for(int i=0;i<global_path_.poses.size();i++){
     plan.push_back(global_path_.poses[i]);
   }
+}
+
+bool P2PGlobalPlanManager::sameGoal(const geometry_msgs::msg::PoseStamped& a,
+                                    const geometry_msgs::msg::PoseStamped& b) const {
+  constexpr double pos_eps = 1e-4;
+  constexpr double rot_eps = 1e-4;
+  return std::fabs(a.pose.position.x - b.pose.position.x) < pos_eps &&
+         std::fabs(a.pose.position.y - b.pose.position.y) < pos_eps &&
+         std::fabs(a.pose.position.z - b.pose.position.z) < pos_eps &&
+         std::fabs(a.pose.orientation.x - b.pose.orientation.x) < rot_eps &&
+         std::fabs(a.pose.orientation.y - b.pose.orientation.y) < rot_eps &&
+         std::fabs(a.pose.orientation.z - b.pose.orientation.z) < rot_eps &&
+         std::fabs(a.pose.orientation.w - b.pose.orientation.w) < rot_eps;
 }
 
 }
