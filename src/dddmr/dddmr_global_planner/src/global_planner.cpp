@@ -328,44 +328,26 @@ void GlobalPlanner::getROSPath(std::vector<unsigned int>& path_id, nav_msgs::msg
     pst.pose.position.y = pcl_ground_->points[path_id[it]].y;
     pst.pose.position.z = pcl_ground_->points[path_id[it]].z;
 
-    geometry_msgs::msg::PoseStamped next_pst;
-    if(it<path_id.size()-1){
-      next_pst.pose.position.x = pcl_ground_->points[path_id[it+1]].x;
-      next_pst.pose.position.y = pcl_ground_->points[path_id[it+1]].y;
-      next_pst.pose.position.z = pcl_ground_->points[path_id[it+1]].z;
+    double vx = 0.0;
+    double vy = 0.0;
+    if(path_id.size() > 1){
+      if(it < path_id.size() - 1){
+        vx = pcl_ground_->points[path_id[it+1]].x - pst.pose.position.x;
+        vy = pcl_ground_->points[path_id[it+1]].y - pst.pose.position.y;
+      }
+      else{
+        vx = pst.pose.position.x - pcl_ground_->points[path_id[it-1]].x;
+        vy = pst.pose.position.y - pcl_ground_->points[path_id[it-1]].y;
+      }
     }
 
-
-    double vx,vy,vz;
-    vx = next_pst.pose.position.x - pst.pose.position.x;
-    vy = next_pst.pose.position.y - pst.pose.position.y;
-    vz = next_pst.pose.position.z - pst.pose.position.z;
-
-    if(vz!=0){
-      double unit = sqrt(vx*vx + vy*vy + vz*vz);
-      
-      tf2::Vector3 axis_vector(vx/unit, vy/unit, vz/unit);
-
-      tf2::Vector3 up_vector(1.0, 0.0, 0.0);
-      tf2::Vector3 right_vector = axis_vector.cross(up_vector);
-      right_vector.normalized();
-      tf2::Quaternion q(right_vector, -1.0*acos(axis_vector.dot(up_vector)));
-      q.normalize();
-      pst.pose.orientation.x = q.getX();
-      pst.pose.orientation.y = q.getY();
-      pst.pose.orientation.z = q.getZ();
-      pst.pose.orientation.w = q.getW();
-    }
-    else{
-      //@ handle with 2D
-      double yaw = atan2(vy, vx);
-      tf2::Quaternion q;
-      q.setRPY(0.0, 0.0, yaw);
-      pst.pose.orientation.x = q.getX();
-      pst.pose.orientation.y = q.getY();
-      pst.pose.orientation.z = q.getZ();
-      pst.pose.orientation.w = q.getW();
-    }
+    double yaw = atan2(vy, vx);
+    tf2::Quaternion q;
+    q.setRPY(0.0, 0.0, yaw);
+    pst.pose.orientation.x = q.getX();
+    pst.pose.orientation.y = q.getY();
+    pst.pose.orientation.z = q.getZ();
+    pst.pose.orientation.w = q.getW();
 
     //RCLCPP_INFO(this->get_logger(), "%.2f, %.2f, %.2f,%.2f, %.2f, %.2f, %.2f", vx, vy, vz, q.getX(), q.getY(), q.getZ(), q.getW());
     //@Interpolation to make global plan smoother and better resolution for local planner

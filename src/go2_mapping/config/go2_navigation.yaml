@@ -332,6 +332,7 @@ perception_3d_local:
       scan_effective_negative_end: -180.0   # 음의 yaw 방향에서 실제 obstacle 처리 종료 방위각 [deg]
       resolution: 0.05                      # local obstacle grid의 xy 해상도 [m]
       height_resolution: 0.05               # obstacle voxel/height 축 해상도 [m]
+      marking_minimum_height: 0.25          # base_footprint 기준 낮은 지면/완만한 경사를 obstacle로 오인하지 않도록 제외 [m]
       marking_height: 2.0                   # obstacle marking에 고려할 최대 높이 [m]
       perception_window_size: 3.0           # 로봇 주변 local perception window 크기/반경 기준 [m]
       segmentation_ignore_ratio: 0.5        # segmentation 결과 중 무시할 비율/신뢰도 기준
@@ -388,6 +389,7 @@ perception_3d_global:
 global_planner:
   ros__parameters:
     turning_weight: 0.1                     # 경로 비용에서 회전/방향 전환에 부과하는 가중치
+    a_star_expanding_radius: 0.8            # ground graph 이웃 탐색 반경. 지면 z 변화/희소 point로 인한 불필요한 우회 완화 [m]
     enable_detail_log: false                # true일 때 planner 내부 상세 디버그 log 출력
     find_start_tolerance: 1.0               # 시작 위치 snap 허용 반경을 줄여 이상한 우회 시작 방지 [m]
 
