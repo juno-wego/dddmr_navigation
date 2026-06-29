@@ -52,6 +52,7 @@ type edge_t is inside here
 #include <global_planner/a_star_on_pc.h>
 #include <global_planner/a_star_on_pre_graph.h>
 #include <set>
+#include <limits>
 
 /*For distance calculation*/
 #include <pcl/common/geometry.h>
@@ -131,6 +132,8 @@ class GlobalPlanner : public rclcpp::Node {
       size_t static_ground_size_;
       bool use_pre_graph_;
       double find_start_tolerance_;
+      double graph_connect_xy_tolerance_;
+      double graph_connect_z_tolerance_;
       
       /*Original point cloud*/
       pcl::PointCloud<pcl::PointXYZI>::Ptr pcl_ground_;
@@ -169,7 +172,10 @@ class GlobalPlanner : public rclcpp::Node {
                           unsigned int& start_id, unsigned int& goal_id);
 
       void pubStaticGraph();
-      void getROSPath(std::vector<unsigned int>& path_id, nav_msgs::msg::Path& ros_path);
+      void getROSPath(
+        std::vector<unsigned int>& path_id,
+        nav_msgs::msg::Path& ros_path,
+        const geometry_msgs::msg::PoseStamped& goal);
       void pubWeight();
       
       std::mutex protect_kdtree_ground_;

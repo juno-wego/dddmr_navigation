@@ -79,11 +79,18 @@ install(DIRECTORY include/
   DESTINATION include/
 )
 
+set(ODOM_3D_SHARE_DIRS
+  launch
+  rviz
+)
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/bag_files")
+  list(APPEND ODOM_3D_SHARE_DIRS bag_files)
+endif()
+
 install(DIRECTORY
- "launch"
- "rviz"
- "bag_files"
- DESTINATION share/${PROJECT_NAME}/
+  ${ODOM_3D_SHARE_DIRS}
+  DESTINATION share/${PROJECT_NAME}/
 )
 
 ament_export_include_directories(include)

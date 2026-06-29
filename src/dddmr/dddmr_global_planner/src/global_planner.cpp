@@ -35,6 +35,70 @@ using namespace std::chrono_literals;
 namespace global_planner
 {
 
+namespace
+{
+
+bool hasValidGoalOrientation(const geometry_msgs::msg::Quaternion& q_msg)
+{
+  const double norm_sq =
+    q_msg.x * q_msg.x +
+    q_msg.y * q_msg.y +
+    q_msg.z * q_msg.z +
+    q_msg.w * q_msg.w;
+  return norm_sq > 1e-6;
+}
+
+double getYawFromQuaternion(const geometry_msgs::msg::Quaternion& q_msg)
+{
+  tf2::Quaternion q(q_msg.x, q_msg.y, q_msg.z, q_msg.w);
+  q.normalize();
+
+  double roll;
+  double pitch;
+  double yaw;
+  tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+  return yaw;
+}
+
+double getGraphSearchRadius(double xy_tolerance, double z_tolerance)
+{
+  return std::sqrt(2.0 * xy_tolerance * xy_tolerance + z_tolerance * z_tolerance);
+}
+
+bool selectNearestGraphPoint(
+  const pcl::PointCloud<pcl::PointXYZI>& cloud,
+  const pcl::PointXYZI& query,
+  const std::vector<int>& candidate_indices,
+  double xy_tolerance,
+  double z_tolerance,
+  unsigned int& selected_id)
+{
+  bool found = false;
+  double best_distance_sq = std::numeric_limits<double>::max();
+
+  for(const int index : candidate_indices){
+    const auto& point = cloud.points[index];
+    const double dx = point.x - query.x;
+    const double dy = point.y - query.y;
+    const double dz = point.z - query.z;
+
+    if(std::fabs(dx) > xy_tolerance || std::fabs(dy) > xy_tolerance || std::fabs(dz) > z_tolerance){
+      continue;
+    }
+
+    const double distance_sq = dx * dx + dy * dy + dz * dz;
+    if(distance_sq < best_distance_sq){
+      best_distance_sq = distance_sq;
+      selected_id = static_cast<unsigned int>(index);
+      found = true;
+    }
+  }
+
+  return found;
+}
+
+}  // namespace
+
 GlobalPlanner::GlobalPlanner(const std::string& name)
     : Node(name) 
 {
@@ -104,6 +168,14 @@ void GlobalPlanner::initial(const std::shared_ptr<perception_3d::Perception3D_RO
   declare_parameter("find_start_tolerance", rclcpp::ParameterValue(0.5));
   this->get_parameter("find_start_tolerance", find_start_tolerance_);
   RCLCPP_INFO(this->get_logger(), "find_start_tolerance: %.2f", find_start_tolerance_);    
+
+  declare_parameter("graph_connect_xy_tolerance", rclcpp::ParameterValue(0.3));
+  this->get_parameter("graph_connect_xy_tolerance", graph_connect_xy_tolerance_);
+  RCLCPP_INFO(this->get_logger(), "graph_connect_xy_tolerance: %.2f", graph_connect_xy_tolerance_);
+
+  declare_parameter("graph_connect_z_tolerance", rclcpp::ParameterValue(0.3));
+  this->get_parameter("graph_connect_z_tolerance", graph_connect_z_tolerance_);
+  RCLCPP_INFO(this->get_logger(), "graph_connect_z_tolerance: %.2f", graph_connect_z_tolerance_);
 
   
 
@@ -228,7 +300,7 @@ void GlobalPlanner::cbClickedPoint(const geometry_msgs::msg::PointStamped::Share
   }
   else{
     //postSmoothPath(path, smoothed_path);
-    getROSPath(path, ros_path);
+    getROSPath(path, ros_path, goal);
     pub_path_->publish(ros_path);
     RCLCPP_INFO(this->get_logger(), "Path found from: %u to %u", start_id, goal_id);
   }
@@ -315,11 +387,17 @@ void GlobalPlanner::postSmoothPath(std::vector<unsigned int>& path_id, std::vect
   smoothed_path_id.push_back(path_id[path_id.size()-1]);
 }
 
-void GlobalPlanner::getROSPath(std::vector<unsigned int>& path_id, nav_msgs::msg::Path& ros_path){
+void GlobalPlanner::getROSPath(
+  std::vector<unsigned int>& path_id,
+  nav_msgs::msg::Path& ros_path,
+  const geometry_msgs::msg::PoseStamped& goal){
 
   ros_path.header.frame_id = global_frame_;
   ros_path.header.stamp = clock_->now();
 
+  const bool has_goal_orientation = hasValidGoalOrientation(goal.pose.orientation);
+  double last_valid_yaw = has_goal_orientation ? getYawFromQuaternion(goal.pose.orientation) : 0.0;
+  bool has_last_valid_yaw = has_goal_orientation;
 
   for(auto it=0;it<path_id.size();it++){
     geometry_msgs::msg::PoseStamped pst;
@@ -330,18 +408,31 @@ void GlobalPlanner::getROSPath(std::vector<unsigned int>& path_id, nav_msgs::msg
 
     double vx = 0.0;
     double vy = 0.0;
+    double vz = 0.0;
     if(path_id.size() > 1){
       if(it < path_id.size() - 1){
         vx = pcl_ground_->points[path_id[it+1]].x - pst.pose.position.x;
         vy = pcl_ground_->points[path_id[it+1]].y - pst.pose.position.y;
+        vz = pcl_ground_->points[path_id[it+1]].z - pst.pose.position.z;
       }
       else{
         vx = pst.pose.position.x - pcl_ground_->points[path_id[it-1]].x;
         vy = pst.pose.position.y - pcl_ground_->points[path_id[it-1]].y;
+        vz = pst.pose.position.z - pcl_ground_->points[path_id[it-1]].z;
       }
     }
 
-    double yaw = atan2(vy, vx);
+    const double planar_distance = hypot(vx, vy);
+    double yaw = last_valid_yaw;
+    if(planar_distance > 1e-4){
+      yaw = atan2(vy, vx);
+      last_valid_yaw = yaw;
+      has_last_valid_yaw = true;
+    }
+    else if(!has_last_valid_yaw){
+      yaw = 0.0;
+    }
+
     tf2::Quaternion q;
     q.setRPY(0.0, 0.0, yaw);
     pst.pose.orientation.x = q.getX();
@@ -349,7 +440,10 @@ void GlobalPlanner::getROSPath(std::vector<unsigned int>& path_id, nav_msgs::msg
     pst.pose.orientation.z = q.getZ();
     pst.pose.orientation.w = q.getW();
 
-    //RCLCPP_INFO(this->get_logger(), "%.2f, %.2f, %.2f,%.2f, %.2f, %.2f, %.2f", vx, vy, vz, q.getX(), q.getY(), q.getZ(), q.getW());
+    if(it == path_id.size() - 1 && has_goal_orientation){
+      pst.pose.orientation = goal.pose.orientation;
+    }
+
     //@Interpolation to make global plan smoother and better resolution for local planner
     geometry_msgs::msg::PoseStamped pst_inter_polate = pst;
     if(it<path_id.size()-1){
@@ -380,6 +474,9 @@ void GlobalPlanner::getROSPath(std::vector<unsigned int>& path_id, nav_msgs::msg
 bool GlobalPlanner::getStartGoalID(const geometry_msgs::msg::PoseStamped& start, const geometry_msgs::msg::PoseStamped& goal,
                                     unsigned int& start_id, unsigned int& goal_id){
 
+  const double graph_search_radius = getGraphSearchRadius(
+    graph_connect_xy_tolerance_, graph_connect_z_tolerance_);
+
   //@Get goal ID
   std::vector<int> pointIdxRadiusSearch_goal;
   std::vector<float> pointRadiusSquaredDistance_goal;
@@ -391,7 +488,19 @@ bool GlobalPlanner::getStartGoalID(const geometry_msgs::msg::PoseStamped& start,
   //@Compute nearest pc as goal
   //@TODO: add an edge between goal and nearest pc
   
-  if(kdtree_ground_->radiusSearch (pcl_goal, 0.5, pointIdxRadiusSearch_goal, pointRadiusSquaredDistance_goal)<1){
+  if(
+    kdtree_ground_->radiusSearch(
+      pcl_goal,
+      graph_search_radius,
+      pointIdxRadiusSearch_goal,
+      pointRadiusSquaredDistance_goal) < 1 ||
+    !selectNearestGraphPoint(
+      *pcl_ground_,
+      pcl_goal,
+      pointIdxRadiusSearch_goal,
+      graph_connect_xy_tolerance_,
+      graph_connect_z_tolerance_,
+      goal_id)){
     RCLCPP_WARN(this->get_logger(), "Goal is not found.");
     RCLCPP_WARN(this->get_logger(), "Using vertical search to find a goal on the ground.");
     bool second_search = false;
@@ -400,8 +509,20 @@ bool GlobalPlanner::getStartGoalID(const geometry_msgs::msg::PoseStamped& start,
         pointIdxRadiusSearch_goal.clear();
         pointRadiusSquaredDistance_goal.clear();
         pcl_goal.z = z;
-        if(kdtree_ground_->radiusSearch(pcl_goal, 0.3, pointIdxRadiusSearch_goal, pointRadiusSquaredDistance_goal,0)>0)
-        {
+        if(
+          kdtree_ground_->radiusSearch(
+            pcl_goal,
+            graph_search_radius,
+            pointIdxRadiusSearch_goal,
+            pointRadiusSquaredDistance_goal,
+            0) > 0 &&
+          selectNearestGraphPoint(
+            *pcl_ground_,
+            pcl_goal,
+            pointIdxRadiusSearch_goal,
+            graph_connect_xy_tolerance_,
+            graph_connect_z_tolerance_,
+            goal_id)){
           second_search = true;
           break;
         }
@@ -412,22 +533,19 @@ bool GlobalPlanner::getStartGoalID(const geometry_msgs::msg::PoseStamped& start,
     else{
       return false;
     }
-    return false;
   }
   
   if(enable_detail_log_){
     RCLCPP_WARN(this->get_logger(), "Selected goal: %.2f, %.2f, %.2f, Nearest-> id: %u, x: %.2f, y: %.2f, z: %.2f", 
-      goal.pose.position.x, goal.pose.position.y, goal.pose.position.z, pointIdxRadiusSearch_goal[0], 
-      pcl_ground_->points[pointIdxRadiusSearch_goal[0]].x, pcl_ground_->points[pointIdxRadiusSearch_goal[0]].y, pcl_ground_->points[pointIdxRadiusSearch_goal[0]].z);
+      goal.pose.position.x, goal.pose.position.y, goal.pose.position.z, goal_id, 
+      pcl_ground_->points[goal_id].x, pcl_ground_->points[goal_id].y, pcl_ground_->points[goal_id].z);
   }
   else{
     RCLCPP_WARN_THROTTLE(this->get_logger(), *clock_, 5000, "Selected goal: %.2f, %.2f, %.2f, Nearest-> id: %u, x: %.2f, y: %.2f, z: %.2f", 
-      goal.pose.position.x, goal.pose.position.y, goal.pose.position.z, pointIdxRadiusSearch_goal[0], 
-      pcl_ground_->points[pointIdxRadiusSearch_goal[0]].x, pcl_ground_->points[pointIdxRadiusSearch_goal[0]].y, pcl_ground_->points[pointIdxRadiusSearch_goal[0]].z);
+      goal.pose.position.x, goal.pose.position.y, goal.pose.position.z, goal_id, 
+      pcl_ground_->points[goal_id].x, pcl_ground_->points[goal_id].y, pcl_ground_->points[goal_id].z);
   }
-  
-  goal_id = pointIdxRadiusSearch_goal[0];
-  
+
   //--------------------------------------------------------------------------------------
   //@Get start ID
   std::vector<int> pointIdxRadiusSearch_start;
@@ -437,23 +555,34 @@ bool GlobalPlanner::getStartGoalID(const geometry_msgs::msg::PoseStamped& start,
   pcl_start.y = start.pose.position.y;
   pcl_start.z = start.pose.position.z;
 
-  if(kdtree_ground_->radiusSearch (pcl_start, find_start_tolerance_, pointIdxRadiusSearch_start, pointRadiusSquaredDistance_start)<1){
+  if(
+    kdtree_ground_->radiusSearch(
+      pcl_start,
+      std::max(find_start_tolerance_, graph_search_radius),
+      pointIdxRadiusSearch_start,
+      pointRadiusSquaredDistance_start) < 1 ||
+    !selectNearestGraphPoint(
+      *pcl_ground_,
+      pcl_start,
+      pointIdxRadiusSearch_start,
+      graph_connect_xy_tolerance_,
+      graph_connect_z_tolerance_,
+      start_id)){
     RCLCPP_WARN(this->get_logger(), "Start is not found.");
     return false;
   }
   
   if(enable_detail_log_){
     RCLCPP_WARN(this->get_logger(), "Selected start: %.2f, %.2f, %.2f, Nearest-> id: %u, x: %.2f, y: %.2f, z: %.2f", 
-      start.pose.position.x, start.pose.position.y, start.pose.position.z, pointIdxRadiusSearch_start[0], 
-      pcl_ground_->points[pointIdxRadiusSearch_start[0]].x, pcl_ground_->points[pointIdxRadiusSearch_start[0]].y, pcl_ground_->points[pointIdxRadiusSearch_start[0]].z);
+      start.pose.position.x, start.pose.position.y, start.pose.position.z, start_id, 
+      pcl_ground_->points[start_id].x, pcl_ground_->points[start_id].y, pcl_ground_->points[start_id].z);
   }
   else{
     RCLCPP_WARN_THROTTLE(this->get_logger(), *clock_, 5000, "Selected start: %.2f, %.2f, %.2f, Nearest-> id: %u, x: %.2f, y: %.2f, z: %.2f", 
-      start.pose.position.x, start.pose.position.y, start.pose.position.z, pointIdxRadiusSearch_start[0], 
-      pcl_ground_->points[pointIdxRadiusSearch_start[0]].x, pcl_ground_->points[pointIdxRadiusSearch_start[0]].y, pcl_ground_->points[pointIdxRadiusSearch_start[0]].z);
+      start.pose.position.x, start.pose.position.y, start.pose.position.z, start_id, 
+      pcl_ground_->points[start_id].x, pcl_ground_->points[start_id].y, pcl_ground_->points[start_id].z);
 
   }
-  start_id = pointIdxRadiusSearch_start[0];
 
   return true;
 
@@ -524,7 +653,7 @@ nav_msgs::msg::Path GlobalPlanner::makeROSPlan(const geometry_msgs::msg::PoseSta
       RCLCPP_INFO(this->get_logger(), "Path found from: %u to %u", start_id, goal_id);
     else
       RCLCPP_INFO_THROTTLE(this->get_logger(), *clock_, 5000, "Path found from: %u to %u", start_id, goal_id);
-    getROSPath(path, ros_path);
+    getROSPath(path, ros_path, goal);
     ros_path.poses.push_back(goal);
     return ros_path;
   }

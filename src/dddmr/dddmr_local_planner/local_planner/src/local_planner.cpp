@@ -29,6 +29,7 @@
 * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 #include <local_planner/local_planner.h>
+#include <sstream>
 
 namespace local_planner {
 
@@ -489,6 +490,32 @@ void Local_Planner::getBestTrajectory(std::string traj_gen_name, base_trajectory
 
 }
 
+namespace
+{
+
+std::string formatRejectedTrajectoryReport(
+  const std::map<std::string, std::vector<base_trajectory::Trajectory>>& rejected_trajectories,
+  std::size_t total_trajectories)
+{
+  std::ostringstream oss;
+  bool first = true;
+  for(const auto& [name, trajectories] : rejected_trajectories){
+    if(!first){
+      oss << ", ";
+    }
+    first = false;
+    oss << name << ":" << trajectories.size();
+  }
+
+  if(total_trajectories == 0){
+    oss << " | no_samples_generated";
+  }
+
+  return oss.str();
+}
+
+}  // namespace
+
 dddmr_sys_core::PlannerState Local_Planner::computeVelocityCommand(std::string traj_gen_name, base_trajectory::Trajectory& best_traj){
   
   if(!got_odom_){
@@ -624,10 +651,23 @@ dddmr_sys_core::PlannerState Local_Planner::computeVelocityCommand(std::string t
 
 
   if(best_traj.cost_<0){
-    RCLCPP_WARN_THROTTLE(this->get_logger().get_child(name_), *clock_, 5000, "All trajectories are rejected by critics.");
+    const std::string rejection_report =
+      formatRejectedTrajectoryReport(rejected_trajectories_, trajectories_->size());
+    RCLCPP_WARN_THROTTLE(
+      this->get_logger().get_child(name_),
+      *clock_,
+      5000,
+      "All trajectories are rejected by critics. report={%s}",
+      rejection_report.c_str());
     return dddmr_sys_core::ALL_TRAJECTORIES_FAIL;
   }
   else{
+    auto& ref_twist = trajectory_generators_ros_->getSharedDataPtr()->ref_twist_for_trajectory_generation_;
+    ref_twist.header.stamp = clock_->now();
+    ref_twist.header.frame_id = perception_3d_ros_->getGlobalUtils()->getRobotFrame();
+    ref_twist.twist.linear.x = best_traj.xv_;
+    ref_twist.twist.linear.y = best_traj.yv_;
+    ref_twist.twist.angular.z = best_traj.thetav_;
     return dddmr_sys_core::TRAJECTORY_FOUND;
   }
   

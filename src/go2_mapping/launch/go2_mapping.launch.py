@@ -148,7 +148,7 @@ def generate_launch_description():
                     "║    ~/dddmr_navigation/maps/go2/<timestamp>/              ║\n",
                     "║                                                          ║\n",
                     "║  Then navigate using:                                    ║\n",
-                    "║    ros2 launch go2_mapping go2_navigation.launch.py \\    ║\n",
+                    "║    ros2 launch go2_navigation go2_navigation.launch.py \\ ║\n",
                     "║        map_dir:=<path above>                             ║\n",
                     "╚══════════════════════════════════════════════════════════╝\n",
                 ]

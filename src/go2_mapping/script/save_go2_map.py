@@ -106,7 +106,7 @@ class MapSaverNode(Node):
             "Map save service returned successfully.\n"
             f"Saved pose-graph directory:\n  {saved_dir}\n\n"
             "To load this map for navigation use:\n"
-            "  ros2 launch go2_mapping go2_navigation.launch.py \\\n"
+            "  ros2 launch go2_navigation go2_navigation.launch.py \\\n"
             f"    map_dir:={saved_dir}"
         )
         return True

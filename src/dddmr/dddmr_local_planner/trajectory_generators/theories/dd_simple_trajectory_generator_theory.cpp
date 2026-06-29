@@ -30,6 +30,8 @@
 */
 #include <trajectory_generators/dd_simple_trajectory_generator_theory.h>
 
+#include <cmath>
+
 PLUGINLIB_EXPORT_CLASS(trajectory_generators::DDSimpleTrajectoryGeneratorTheory, trajectory_generators::TrajectoryGeneratorTheory)
 
 namespace trajectory_generators
@@ -260,19 +262,48 @@ void DDSimpleTrajectoryGeneratorTheory::initialise(){
     if(shared_data_->current_allowed_max_linear_speed_>0.0){
       max_vel_x = std::min(max_vel_x, shared_data_->current_allowed_max_linear_speed_);
     }
-    max_vel[0] = std::min(max_vel_x, shared_data_->robot_state_.twist.twist.linear.x + acc_lim[0] * sim_period);
-    max_vel[2] = std::min(max_vel_th, shared_data_->robot_state_.twist.twist.angular.z + acc_lim[2] * sim_period);
+    const double odom_linear_speed = shared_data_->robot_state_.twist.twist.linear.x;
+    const double odom_angular_speed = shared_data_->robot_state_.twist.twist.angular.z;
+    const double ref_linear_speed =
+      shared_data_->ref_twist_for_trajectory_generation_.twist.linear.x;
+    const double ref_angular_speed =
+      shared_data_->ref_twist_for_trajectory_generation_.twist.angular.z;
 
-    min_vel[0] = std::max(min_vel_x, shared_data_->robot_state_.twist.twist.linear.x/limits_->deceleration_ratio);
-    min_vel[2] = std::max(min_vel_th, shared_data_->robot_state_.twist.twist.angular.z - acc_lim[2] * sim_period);
+    const double current_linear_speed =
+      std::fabs(odom_linear_speed) > 1e-3 ? odom_linear_speed : ref_linear_speed;
+    const double current_angular_speed =
+      std::fabs(odom_angular_speed) > 1e-3 ? odom_angular_speed : ref_angular_speed;
+
+    max_vel[0] = std::min(max_vel_x, current_linear_speed + acc_lim[0] * sim_period);
+    max_vel[2] = std::min(max_vel_th, current_angular_speed + acc_lim[2] * sim_period);
+
+    min_vel[0] = std::max(min_vel_x, current_linear_speed / limits_->deceleration_ratio);
+    min_vel[2] = std::max(min_vel_th, current_angular_speed - acc_lim[2] * sim_period);
+
+    // If odom twist stays near zero while the robot is trying to start moving,
+    // allow at least one meaningful forward sample instead of getting stuck at
+    // an acceleration-limited crawl forever.
+    if (std::fabs(current_linear_speed) < 1e-3) {
+      const float bootstrap_linear_speed =
+        static_cast<float>(std::min(max_vel_x, min_vel_x));
+      max_vel[0] = std::max(max_vel[0], bootstrap_linear_speed);
+      min_vel[0] = std::min(min_vel[0], bootstrap_linear_speed);
+    }
+
+    if (std::fabs(current_angular_speed) < 1e-3) {
+      const float bootstrap_angular_speed =
+        static_cast<float>(std::min(max_vel_th, limits_->min_vel_theta));
+      max_vel[2] = std::max(max_vel[2], bootstrap_angular_speed);
+      min_vel[2] = std::min(min_vel[2], -bootstrap_angular_speed);
+    }
     
     // because the speed zone might introduce huge deceleration than robot kinematic
     // which will cause max_vel[0]<min_vel[0]
     // the min admissible will be shared_data_->robot_state_.twist.twist.linear.x/limits_->deceleration_ratio
     // because the robot will never decelerate enough to meet shared_data_->current_allowed_max_linear_speed_
     if(max_vel[0]<min_vel[0]){
-      min_vel[0] = shared_data_->robot_state_.twist.twist.linear.x/limits_->deceleration_ratio;
-      max_vel[0] = shared_data_->robot_state_.twist.twist.linear.x/limits_->deceleration_ratio;
+      min_vel[0] = current_linear_speed / limits_->deceleration_ratio;
+      max_vel[0] = current_linear_speed / limits_->deceleration_ratio;
     }
 
     Eigen::Vector3f vel_samp = Eigen::Vector3f::Zero();

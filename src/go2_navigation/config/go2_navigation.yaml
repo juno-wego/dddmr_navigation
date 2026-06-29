@@ -164,7 +164,7 @@ local_planner:
     forward_prune: 3.0                     # 현재 로봇 앞쪽으로 남길 전역 경로 길이 [m]
     backward_prune: 1.0                    # 현재 로봇 뒤쪽으로 남길 전역 경로 길이 [m]
     heading_tracking_distance: 0.5         # 너무 멀리 보지 않고 가까운 경로를 따라가게 함
-    heading_align_angle: 0.5               # 시작 자세 정렬을 덜 과격하게 적용
+    heading_align_angle: 1.2               # 시작 yaw가 많이 틀어져도 곡선 추종으로 들어가도록 완화
     prune_plane_timeout: 3.0               # 오래된 prune plan에 끌려가지 않도록 유지 시간 단축
     xy_goal_tolerance: 0.35                # goal 판정을 더 타이트하게 해서 중간에 느슨하게 끝나지 않게 함 [m]
     yaw_goal_tolerance: 0.52               # goal yaw 허용 오차 약 30 deg
@@ -232,9 +232,9 @@ trajectory_generators:
     differential_drive_simple:
       plugin: "trajectory_generators::DDSimpleTrajectoryGeneratorTheory" # 전진과 곡선 주행 후보를 생성하는 generator 구현체
       max_vel_x: 0.32                       # 직선 속도를 낮춰 overshoot와 경로 이탈 감소 [m/s]
-      min_vel_x: 0.08                       # 저속 추종 허용 [m/s]
+      min_vel_x: 0.08                       # 발만 구르는 저속 영역을 피하고 실제 전진이 시작되도록 최소 전진 속도 확보 [m/s]
       max_vel_theta: 0.50                   # 코너에서 더 잘 따라가도록 회전 여유 확보 [rad/s]
-      min_vel_theta: 0.08                   # 작은 각도 보정 허용 [rad/s]
+      min_vel_theta: 0.08                   # 너무 작은 회전 명령 대신 의미 있는 곡선/방향 보정이 나오도록 유지 [rad/s]
       acc_lim_x: 0.6                        # 급가속 완화 [m/s²]
       acc_lim_theta: 0.7                    # 급회전 완화 [rad/s²]
       deceleration_ratio: 2.0               # 감속 한계를 가속 한계 대비 크게 적용하는 비율
@@ -281,11 +281,11 @@ mpc_critics:
       plugin: "mpc_critics::PurePursuitModel" # look-ahead point를 향한 추종 비용 모델
       trajectory_generator: differential_drive_simple # 이 critic이 평가할 trajectory generator 이름
       translation_weight: 1.0                # look-ahead 위치 오차 비용 가중치
-      orientation_weight: 0.05               # heading 오차를 더 반영
+      orientation_weight: 0.01               # pure pursuit가 자세보다 위치 추종 위주로 움직이도록 완화
     toward_global_plan:
       plugin: "mpc_critics::TowardGlobalPlanModel" # trajectory 진행 방향과 global plan 방향의 일치 비용 모델
       trajectory_generator: differential_drive_simple # 이 critic이 평가할 trajectory generator 이름
-      weight: 1.2                            # 진행 방향 일치성 소폭 강화
+      weight: 0.35                           # 전역 경로 방향 일치보다 실제 전진 추종을 우선하도록 완화
     collision_rotate:
       plugin: "mpc_critics::CollisionModel" # 제자리 회전 중 충돌 비용 모델
       trajectory_generator: differential_drive_rotate_inplace # 이 critic이 평가할 trajectory generator 이름

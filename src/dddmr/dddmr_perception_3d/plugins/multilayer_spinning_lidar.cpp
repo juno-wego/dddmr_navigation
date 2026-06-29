@@ -110,7 +110,11 @@ void MultiLayerSpinningLidar::onInitialize()
   last_observation_time_ = clock_->now();
 
   node_->declare_parameter(name_ + ".xy_resolution", rclcpp::ParameterValue(0.0));
+  node_->declare_parameter(name_ + ".resolution", rclcpp::ParameterValue(0.0));
   node_->get_parameter(name_ + ".xy_resolution", resolution_);
+  if(resolution_ <= 0.0){
+    node_->get_parameter(name_ + ".resolution", resolution_);
+  }
   RCLCPP_INFO(node_->get_logger().get_child(name_), "xy_resolution: %.2f", resolution_);
 
   node_->declare_parameter(name_ + ".height_resolution", rclcpp::ParameterValue(0.0));
@@ -191,11 +195,13 @@ void MultiLayerSpinningLidar::cbSensor(const sensor_msgs::msg::PointCloud2::Shar
   rclcpp::Time time1(last_sensor_receiving_time_.stamp);
   rclcpp::Time time2(msg->header.stamp);
   rclcpp::Duration diff = time2 - time1;
-  double seconds_between_expectation = fabs(diff.seconds() - expected_sensor_time_);
   last_sensor_receiving_time_ = msg->header;
-  if(seconds_between_expectation>0.05){
+
+  // expected_sensor_time_ is treated as the maximum allowed gap between scans.
+  // Warn only when the stream is actually slower than expected, not when it is faster.
+  if (time1.nanoseconds() > 0 && diff.seconds() > expected_sensor_time_ + 0.05) {
     RCLCPP_WARN_THROTTLE(node_->get_logger().get_child(name_), 
-        *clock_, 1000, "Topic: %s received with lantency higher than your expection: %.3f seconds difference and your are expecting: %.3f", 
+        *clock_, 1000, "Topic: %s received with latency higher than expected: %.3f seconds gap while expecting at most %.3f", 
           topic_.c_str(), diff.seconds(), expected_sensor_time_);
   }
 

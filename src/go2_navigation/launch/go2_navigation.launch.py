@@ -7,11 +7,11 @@ Equivalent to:
 But wired for real Go2 hardware (utlidar + mid360 + aurora odometry).
 
 Usage:
-    ros2 launch go2_mapping go2_navigation.launch.py
+    ros2 launch go2_navigation go2_navigation.launch.py
 
     or:
 
-    ros2 launch go2_mapping go2_navigation.launch.py \\
+    ros2 launch go2_navigation go2_navigation.launch.py \\
         map_dir:=/root/dddmr_navigation/maps/go2/2026-06-25-12-00-00
 
 Map arguments:
@@ -104,8 +104,8 @@ def _build_navigation_nodes(context, *args, **kwargs):
     raw_lidar_topic = LaunchConfiguration("raw_lidar_topic").perform(context)
     odom_topic = LaunchConfiguration("odom_topic").perform(context)
 
-    go2_mapping_share = get_package_share_path("go2_mapping")
-    base_config_file = go2_mapping_share / "config" / "go2_navigation.yaml"
+    go2_navigation_share = get_package_share_path("go2_navigation")
+    base_config_file = go2_navigation_share / "config" / "go2_navigation.yaml"
 
     # ── Patch sub_maps.pose_graph_dir into a temp config ──────────────
     with base_config_file.open("r", encoding="utf-8") as fh:
@@ -240,7 +240,7 @@ def _build_navigation_nodes(context, *args, **kwargs):
 
 
 def generate_launch_description():
-    go2_mapping_share = get_package_share_path("go2_mapping")
+    go2_navigation_share = get_package_share_path("go2_navigation")
 
     # ── Sensor bringup (reused from mapping launch) ────────────────────
     sensors_bringup = IncludeLaunchDescription(
@@ -267,7 +267,7 @@ def generate_launch_description():
     )
 
     # ── RViz ─────────────────────────────────────────────────────────
-    rviz_config = str(go2_mapping_share / "rviz" / "go2_navigation.rviz")
+    rviz_config = str(go2_navigation_share / "rviz" / "go2_navigation.rviz")
     rviz = Node(
         package="rviz2",
         executable="rviz2",
