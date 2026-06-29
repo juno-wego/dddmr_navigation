@@ -186,7 +186,10 @@ def _build_navigation_nodes(context, *args, **kwargs):
                 "output_frame": "base_footprint",
                 "publish_rate": 10.0,
                 "max_cloud_age": 0.2,
-                "max_stamp_skew": 0.12,
+                "max_stamp_skew": 0.25,
+                "odom_topic": odom_topic,
+                "output_stamp_source": "odom",
+                "sync_by_arrival_time": True,
             }
         ],
     )

@@ -67,8 +67,10 @@ private:
   std::string global_planner_action_name_;
   double global_plan_query_frequency_;
   geometry_msgs::msg::PoseStamped goal_;
+  geometry_msgs::msg::PoseStamped planned_goal_;
   bool is_planning_;
   bool got_first_goal_;
+  bool has_valid_plan_for_goal_;
   nav_msgs::msg::Path global_path_;
 
   rclcpp::CallbackGroup::SharedPtr tf_listener_group_;
@@ -80,6 +82,7 @@ private:
   rclcpp_action::Client<dddmr_sys_core::action::GetPlan>::SharedPtr global_planner_client_ptr_;
   void global_planner_client_goal_response_callback(const rclcpp_action::ClientGoalHandle<dddmr_sys_core::action::GetPlan>::SharedPtr & goal_handle);
   void global_planner_client_result_callback(const rclcpp_action::ClientGoalHandle<dddmr_sys_core::action::GetPlan>::WrappedResult & result);
+  bool sameGoal(const geometry_msgs::msg::PoseStamped& a, const geometry_msgs::msg::PoseStamped& b) const;
   
 
 public:

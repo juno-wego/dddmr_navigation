@@ -5,6 +5,7 @@ from contextlib import suppress
 import numpy as np
 import rclpy
 from builtin_interfaces.msg import Time as TimeMsg
+from nav_msgs.msg import Odometry
 from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy
@@ -23,14 +24,23 @@ class PointCloudMerger(Node):
         self.declare_parameter("output_frame", "base_footprint")
         self.declare_parameter("publish_rate", 10.0)
         self.declare_parameter("max_cloud_age", 0.2)
-        self.declare_parameter("max_stamp_skew", 0.12)
+        self.declare_parameter("max_stamp_skew", 0.25)
+        self.declare_parameter("odom_topic", "/slamware_ros_sdk_server_node/odom")
+        self.declare_parameter("output_stamp_source", "odom")
+        self.declare_parameter("sync_by_arrival_time", True)
 
         self.input_topics = list(self.get_parameter("input_topics").value)
         self.output_topic = self.get_parameter("output_topic").value
         self.output_frame = self.get_parameter("output_frame").value
         self.max_cloud_age = float(self.get_parameter("max_cloud_age").value)
         self.max_stamp_skew = float(self.get_parameter("max_stamp_skew").value)
+        self.odom_topic = self.get_parameter("odom_topic").value
+        self.output_stamp_source = self.get_parameter("output_stamp_source").value
+        self.sync_by_arrival_time = bool(
+            self.get_parameter("sync_by_arrival_time").value
+        )
         self.last_published_stamp_ns = None
+        self.latest_odom_stamp_ns = None
 
         qos = QoSProfile(
             history=QoSHistoryPolicy.KEEP_LAST,
@@ -49,6 +59,12 @@ class PointCloudMerger(Node):
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.latest = {}
         self.publisher = self.create_publisher(PointCloud2, self.output_topic, out_qos)
+        self.odom_subscription = self.create_subscription(
+            Odometry,
+            self.odom_topic,
+            self.odom_callback,
+            qos,
+        )
         self.cloud_subscriptions = [
             self.create_subscription(
                 PointCloud2,
@@ -62,11 +78,15 @@ class PointCloudMerger(Node):
         period = 1.0 / max(1e-3, float(self.get_parameter("publish_rate").value))
         self.timer = self.create_timer(period, self.publish_merged)
         self.get_logger().info(
-            f"Merging {self.input_topics} into {self.output_topic} in {self.output_frame}"
+            f"Merging {self.input_topics} into {self.output_topic} in {self.output_frame} "
+            f"(stamp={self.output_stamp_source}, sync_by_arrival_time={self.sync_by_arrival_time})"
         )
 
     def cloud_callback(self, topic, msg):
-        self.latest[topic] = msg
+        self.latest[topic] = (msg, self.get_clock().now().nanoseconds)
+
+    def odom_callback(self, msg):
+        self.latest_odom_stamp_ns = self.stamp_to_ns(msg.header.stamp)
 
     def lookup_matrix(self, msg):
         try:
@@ -95,8 +115,24 @@ class PointCloudMerger(Node):
         return matrix
 
     def cloud_to_xyzi(self, msg):
-        points = point_cloud2.read_points(msg, field_names=None, skip_nans=True)
-        if points.dtype.names is None or not {"x", "y", "z"}.issubset(points.dtype.names):
+        field_names = [field.name for field in msg.fields]
+        if not {"x", "y", "z"}.issubset(field_names):
+            return None
+        read_fields = ["x", "y", "z"]
+        intensity_field = None
+        if "intensity" in field_names:
+            intensity_field = "intensity"
+            read_fields.append("intensity")
+        elif "reflectivity" in field_names:
+            intensity_field = "reflectivity"
+            read_fields.append("reflectivity")
+
+        points = point_cloud2.read_points(
+            msg,
+            field_names=read_fields,
+            skip_nans=True,
+        )
+        if points.dtype.names is None:
             return None
 
         xyz = np.stack(
@@ -111,10 +147,8 @@ class PointCloudMerger(Node):
         matrix = self.lookup_matrix(msg)
         xyz = matrix.dot(xyz)
 
-        if "intensity" in points.dtype.names:
-            intensity = points["intensity"].astype(np.float32, copy=False)
-        elif "reflectivity" in points.dtype.names:
-            intensity = points["reflectivity"].astype(np.float32, copy=False)
+        if intensity_field is not None:
+            intensity = points[intensity_field].astype(np.float32, copy=False)
         else:
             intensity = np.zeros(points.shape[0], dtype=np.float32)
 
@@ -127,7 +161,13 @@ class PointCloudMerger(Node):
             ]
         )
 
-    def stamp_age(self, stamp: TimeMsg):
+    def stamp_age(self, stamp_or_ns):
+        if isinstance(stamp_or_ns, int):
+            if stamp_or_ns <= 0:
+                return 0.0
+            now_ns = self.get_clock().now().nanoseconds
+            return (now_ns - stamp_or_ns) / 1e9
+        stamp = stamp_or_ns
         if stamp.sec == 0 and stamp.nanosec == 0:
             return 0.0
         now = self.get_clock().now()
@@ -142,10 +182,13 @@ class PointCloudMerger(Node):
         merged = []
         used_topics = []
         candidates = []
-        for topic, msg in list(self.latest.items()):
-            if self.stamp_age(msg.header.stamp) > self.max_cloud_age:
+        for topic, entry in list(self.latest.items()):
+            msg, recv_ns = entry
+            age_ref = recv_ns if self.sync_by_arrival_time else msg.header.stamp
+            if self.stamp_age(age_ref) > self.max_cloud_age:
                 continue
-            candidates.append((topic, msg, self.stamp_to_ns(msg.header.stamp)))
+            stamp_ns = recv_ns if self.sync_by_arrival_time else self.stamp_to_ns(msg.header.stamp)
+            candidates.append((topic, msg, stamp_ns))
 
         if not candidates:
             return
@@ -192,12 +235,19 @@ class PointCloudMerger(Node):
             PointField(name="z", offset=8, datatype=PointField.FLOAT32, count=1),
             PointField(name="intensity", offset=12, datatype=PointField.FLOAT32, count=1),
         ]
+        if self.output_stamp_source == "odom" and self.latest_odom_stamp_ns:
+            output_stamp = Time(nanoseconds=self.latest_odom_stamp_ns).to_msg()
+        elif self.output_stamp_source == "now":
+            output_stamp = self.get_clock().now().to_msg()
+        else:
+            output_stamp = (
+                Time(nanoseconds=newest_stamp_ns).to_msg()
+                if newest_stamp_ns > 0
+                else self.get_clock().now().to_msg()
+            )
+
         header = PointCloud2().header
-        header.stamp = (
-            Time(nanoseconds=newest_stamp_ns).to_msg()
-            if newest_stamp_ns > 0
-            else self.get_clock().now().to_msg()
-        )
+        header.stamp = output_stamp
         header.frame_id = self.output_frame
         cloud = point_cloud2.create_cloud(header, fields, data)
         self.publisher.publish(cloud)

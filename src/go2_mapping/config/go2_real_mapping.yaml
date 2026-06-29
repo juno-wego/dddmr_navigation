@@ -46,15 +46,19 @@ lego_loam_fa:
 lego_loam_mo:
   ros__parameters:
     mapping:
-      distance_between_key_frame: 1.0
-      angle_between_key_frame: 1.0
+      distance_between_key_frame: 0.3
+      angle_between_key_frame: 0.3
 
       enable_loop_closure: true
 
-      surrounding_keyframe_search_num: 10
-      history_keyframe_search_radius: 15.0
-      history_keyframe_search_num: 5
-      history_keyframe_fitness_score: 0.5
+      surrounding_keyframe_search_num: 30
+      history_keyframe_search_radius: 35.0
+      history_keyframe_search_num: 15
+      history_keyframe_fitness_score: 1.5
+      loop_candidate_min_accumulated_distance: 8.0
+      loop_candidate_min_index_gap: 60
+      loop_cluster_guard_max_distance: 2.5
+      loop_icp_min_correspondence_distance: 2.0
 
       ground_voxel_size: 0.4
       ground_publish_voxel_size: 0.4

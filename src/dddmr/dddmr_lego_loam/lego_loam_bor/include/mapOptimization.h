@@ -156,6 +156,10 @@ private:
 
   int _surrounding_keyframe_search_num;
   int _history_keyframe_search_num;
+  double _loop_candidate_min_accumulated_distance;
+  int _loop_candidate_min_index_gap;
+  double _loop_cluster_guard_max_distance;
+  double _loop_icp_min_correspondence_distance;
 
   Channel<AssociationOut> &_input_channel;
 
