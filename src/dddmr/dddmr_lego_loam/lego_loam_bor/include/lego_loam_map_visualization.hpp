@@ -2,6 +2,7 @@
 #define LEGO_LOAM_VISUALIZATION_HPP_
 
 #include <atomic>
+#include <mutex>
 
 #include <dddmr_sys_core/srv/get_key_frame_cloud.hpp>
 #include "utility.h"
@@ -26,7 +27,8 @@ public:
   std::vector<pcl::PointCloud<PointType>::Ptr> patchedGroundEdgeKeyFrames;
 
 private:
-  
+  std::mutex data_mutex_;
+
   rclcpp::Clock::SharedPtr clock_;
 
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloudKeyPoses6D_sub_;

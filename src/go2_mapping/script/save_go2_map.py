@@ -31,6 +31,7 @@ from std_srvs.srv import Empty
 # the service name matches what is created in mapOptimization.cpp.
 MAP_SAVE_SERVICE = "/save_mapped_point_cloud"
 TIMEOUT_SEC = 10.0
+CALL_TIMEOUT_SEC = 600.0
 REQUIRED_MAP_FILES = ("poses.pcd", "edges.pcd", "map.pcd", "ground.pcd")
 
 
@@ -84,7 +85,7 @@ class MapSaverNode(Node):
         )
 
         future = self._client.call_async(Empty.Request())
-        rclpy.spin_until_future_complete(self, future, timeout_sec=120.0)
+        rclpy.spin_until_future_complete(self, future, timeout_sec=CALL_TIMEOUT_SEC)
 
         if future.result() is None:
             self.get_logger().error("Map save call timed-out or was interrupted.")

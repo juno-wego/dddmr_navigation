@@ -30,6 +30,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <string>
 
 //@ for kd tree, used to enhance loop closure robust, we use line of sight test
@@ -126,6 +127,8 @@ public:
       trans_b2s_af3_;
 
 private:
+  std::mutex state_mutex_;
+
   std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
   rclcpp::Publisher<geometry_msgs::msg::PoseArray>::SharedPtr pub_key_pose_arr_;

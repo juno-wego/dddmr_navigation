@@ -62,12 +62,14 @@ LegoLoamVisualization::LegoLoamVisualization(std::string name) : Node(name)
 
 void LegoLoamVisualization::m2ci_callback(const geometry_msgs::msg::TransformStamped::SharedPtr msg)
 {
+  std::lock_guard<std::mutex> lock(data_mutex_);
   trans_m2ci_af3_ = tf2::transformToEigen(*msg);
   has_m2ci_ = true;
 }
 
 void LegoLoamVisualization::cloudKeyPoses6D_callback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
 {
+  std::lock_guard<std::mutex> lock(data_mutex_);
   cloudKeyPoses6D.reset(new pcl::PointCloud<PointTypePose>());
   cloudKeyPoses3D.reset(new pcl::PointCloud<PointType>());
   pcl::fromROSMsg(*msg, *cloudKeyPoses6D);
@@ -88,11 +90,13 @@ void LegoLoamVisualization::syncMapAndGroundThread()
   }
 
   auto request = std::make_shared<dddmr_sys_core::srv::GetKeyFrameCloud::Request>();
-  request->key_frame_number = key_frame_clouds_.size();
-  
-  if(request->key_frame_number>=cloudKeyPoses6D->size())
   {
-   return; 
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    request->key_frame_number = key_frame_clouds_.size();
+    if(request->key_frame_number>=cloudKeyPoses6D->size())
+    {
+      return;
+    }
   }
 
   if (!get_key_frame_cloud_client_->service_is_ready()) {
@@ -119,6 +123,7 @@ void LegoLoamVisualization::syncMapAndGroundThread()
         pcl::fromROSMsg(result->key_frame_cloud, pcl_cloud);
         pcl::fromROSMsg(result->key_frame_ground_edge, pcl_ground_edge_cloud);
 
+        std::lock_guard<std::mutex> lock(data_mutex_);
         RCLCPP_INFO_THROTTLE(this->get_logger(), *clock_, 1000, "Sync key frame number: %lu with total size: %lu", key_frame_clouds_.size(), cloudKeyPoses6D->size());
         key_frame_clouds_.push_back(pcl_cloud.makeShared());
         patchedGroundKeyFrames.push_back(pcl_ground_cloud.makeShared());
@@ -134,6 +139,7 @@ void LegoLoamVisualization::syncMapAndGroundThread()
 
 void LegoLoamVisualization::pubMapThread()
 {
+  std::lock_guard<std::mutex> lock(data_mutex_);
   if(!has_m2ci_)
     return;
 
@@ -182,6 +188,7 @@ void LegoLoamVisualization::pubMapThread()
 }
 
 void LegoLoamVisualization::groundEdgeDetectionThread() {
+  std::lock_guard<std::mutex> lock(data_mutex_);
 
   if(!has_m2ci_)
     return;

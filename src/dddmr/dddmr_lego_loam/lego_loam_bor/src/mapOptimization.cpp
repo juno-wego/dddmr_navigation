@@ -240,7 +240,7 @@ MapOptimization::MapOptimization(std::string name,
 
 void MapOptimization::getKeyFrameCloud(const std::shared_ptr<dddmr_sys_core::srv::GetKeyFrameCloud::Request> request,
           std::shared_ptr<dddmr_sys_core::srv::GetKeyFrameCloud::Response> response){
-
+  std::lock_guard<std::mutex> lock(state_mutex_);
   pcl::PointCloud<PointType>::Ptr keyFrameBaseLink;
   keyFrameBaseLink.reset(new pcl::PointCloud<PointType>());
   pcl::toROSMsg(*keyFrameBaseLink, response->key_frame_cloud);
@@ -271,7 +271,7 @@ void MapOptimization::getKeyFrameCloud(const std::shared_ptr<dddmr_sys_core::srv
 
 void MapOptimization::pcdSaver(const std::shared_ptr<std_srvs::srv::Empty::Request> request,
           std::shared_ptr<std_srvs::srv::Empty::Response> response){
-  
+  std::lock_guard<std::mutex> lock(state_mutex_);
   if (cloudKeyPoses3D->points.empty() == true) {
     RCLCPP_WARN(
         this->get_logger(),
@@ -281,152 +281,195 @@ void MapOptimization::pcdSaver(const std::shared_ptr<std_srvs::srv::Empty::Reque
     return;
   }
 
-  std::string mapping_dir_string;
-  auto env_p = std::getenv("DDDMR_MAPPING_DIR");
-  if(generate_testing_pg_){
-    mapping_dir_string = std::string("/tmp/testing_pg");
-    try {
-      std::uintmax_t removed_count = std::filesystem::remove_all(mapping_dir_string); 
-      RCLCPP_INFO(this->get_logger(), "Generate testing pg is enabled, removing dir: %s", mapping_dir_string.c_str());
-    } catch (const std::filesystem::filesystem_error& e) {
+  const size_t pose3d_size = cloudKeyPoses3D->points.size();
+  const size_t pose6d_size = cloudKeyPoses6D->points.size();
+  const size_t corner_size = cornerCloudKeyFrames.size();
+  const size_t ground_size = patchedGroundKeyFrames.size();
+  const size_t surf_size = surfCloudKeyFrames.size();
+  const size_t outlier_size = outlierCloudKeyFrames.size();
+
+  RCLCPP_INFO(
+      this->get_logger(),
+      "Saving map. key poses: 3D=%zu 6D=%zu corner=%zu ground=%zu surf=%zu outlier=%zu",
+      pose3d_size, pose6d_size, corner_size, ground_size, surf_size, outlier_size);
+
+  auto valid_key_index = [&](int key_index, const char *label) -> bool {
+    if (key_index < 0) {
+      RCLCPP_ERROR(this->get_logger(), "Invalid negative key index for %s: %d", label, key_index);
+      return false;
     }
-    std::filesystem::create_directories(mapping_dir_string);
-    RCLCPP_INFO(this->get_logger(), "Generate testing pg is enabled, create dir: %s", mapping_dir_string.c_str());
+    const size_t idx = static_cast<size_t>(key_index);
+    if (idx >= pose6d_size || idx >= corner_size || idx >= ground_size || idx >= surf_size ||
+        idx >= outlier_size) {
+      RCLCPP_ERROR(
+          this->get_logger(),
+          "Key index out of range while saving %s: idx=%zu pose6d=%zu corner=%zu ground=%zu surf=%zu outlier=%zu",
+          label, idx, pose6d_size, corner_size, ground_size, surf_size, outlier_size);
+      return false;
+    }
+    return true;
+  };
+
+  auto save_pcd_checked = [&](const std::string &path, const auto &cloud, const char *label) -> bool {
+    if (pcl::io::savePCDFileASCII(path, cloud) != 0) {
+      RCLCPP_ERROR(this->get_logger(), "Failed to save %s to %s", label, path.c_str());
+      return false;
+    }
+    return true;
+  };
+
+  try {
+    std::string mapping_dir_string;
+    auto env_p = std::getenv("DDDMR_MAPPING_DIR");
+    if (generate_testing_pg_) {
+      mapping_dir_string = std::string("/tmp/testing_pg");
+      try {
+        std::filesystem::remove_all(mapping_dir_string);
+        RCLCPP_INFO(this->get_logger(), "Generate testing pg is enabled, removing dir: %s", mapping_dir_string.c_str());
+      } catch (const std::filesystem::filesystem_error &) {
+      }
+      std::filesystem::create_directories(mapping_dir_string);
+      RCLCPP_INFO(this->get_logger(), "Generate testing pg is enabled, create dir: %s", mapping_dir_string.c_str());
+    } else if (env_p == NULL) {
+      mapping_dir_string = std::string("/tmp/") + currentDateTime();
+      std::filesystem::create_directories(mapping_dir_string);
+      RCLCPP_INFO(this->get_logger(), "Create dir: %s", mapping_dir_string.c_str());
+    } else {
+      mapping_dir_string = std::string(env_p) + currentDateTime();
+      std::filesystem::create_directories(mapping_dir_string);
+      RCLCPP_INFO(this->get_logger(), "Create dir: %s", mapping_dir_string.c_str());
+    }
+
+    completeGlobalStitch.reset(new pcl::PointCloud<PointType>());
+    for (size_t i = 0; i < pose3d_size; ++i) {
+      int thisKeyInd = static_cast<int>(cloudKeyPoses3D->points[i].intensity);
+      if (!valid_key_index(thisKeyInd, "map")) {
+        continue;
+      }
+      *completeGlobalStitch += *transformPointCloud(
+          cornerCloudKeyFrames[thisKeyInd], &cloudKeyPoses6D->points[thisKeyInd]);
+    }
+
+    downSizeFilterFinalStitch.setInputCloud(completeGlobalStitch);
+    downSizeFilterFinalStitch.filter(*completeGlobalStitch);
+    pcl::transformPointCloud(*completeGlobalStitch, *completeGlobalStitch, trans_s2c_af3_);
+    if (!save_pcd_checked(mapping_dir_string + "/map.pcd", *completeGlobalStitch, "map")) {
+      return;
+    }
+
+    completeGlobalStitch.reset(new pcl::PointCloud<PointType>());
+    for (size_t i = 0; i < pose3d_size; ++i) {
+      int thisKeyInd = static_cast<int>(cloudKeyPoses3D->points[i].intensity);
+      if (!valid_key_index(thisKeyInd, "ground")) {
+        continue;
+      }
+      *completeGlobalStitch += *transformPointCloud(
+          patchedGroundKeyFrames[thisKeyInd], &cloudKeyPoses6D->points[thisKeyInd]);
+    }
+    downSizeFilterFinalStitch.setInputCloud(completeGlobalStitch);
+    downSizeFilterFinalStitch.filter(*completeGlobalStitch);
+    pcl::transformPointCloud(*completeGlobalStitch, *completeGlobalStitch, trans_s2c_af3_);
+    if (!save_pcd_checked(mapping_dir_string + "/ground.pcd", *completeGlobalStitch, "ground")) {
+      return;
+    }
+
+    pcl::PointCloud<PointTypePose> cloudKeyPoses6DBaseLink;
+    std::vector<geometry_msgs::msg::TransformStamped> cloudKeyPoses6DBaseLink_geo;
+    cloudKeyPoses6DBaseLink_geo.reserve(pose6d_size);
+    for (auto it = cloudKeyPoses6D->points.begin(); it != cloudKeyPoses6D->points.end(); it++) {
+      tf2::Transform tf2_trans_ci2c;
+      tf2::Quaternion q;
+      q.setRPY((*it).roll, (*it).pitch, (*it).yaw);
+      tf2_trans_ci2c.setRotation(q);
+      tf2_trans_ci2c.setOrigin(tf2::Vector3((*it).x, (*it).y, (*it).z));
+
+      tf2::Transform tf2_trans_m2c, tf2_trans_m2s, tf2_trans_m2b;
+      tf2_trans_m2c.mult(tf2_trans_m2ci_, tf2_trans_ci2c);
+      tf2_trans_m2s.mult(tf2_trans_m2c, tf2_trans_c2s_);
+      tf2_trans_m2b.mult(tf2_trans_m2s, tf2_trans_b2s_.inverse());
+
+      PointTypePose pt;
+      pt.x = tf2_trans_m2b.getOrigin().x();
+      pt.y = tf2_trans_m2b.getOrigin().y();
+      pt.z = tf2_trans_m2b.getOrigin().z();
+      tf2::Matrix3x3 m(tf2_trans_m2b.getRotation());
+      double roll, pitch, yaw;
+      m.getRPY(roll, pitch, yaw);
+      pt.roll = roll;
+      pt.pitch = pitch;
+      pt.yaw = yaw;
+      pt.intensity = (*it).intensity;
+      cloudKeyPoses6DBaseLink.push_back(pt);
+
+      geometry_msgs::msg::TransformStamped pose_6d_geo;
+      pose_6d_geo.transform.translation.x = tf2_trans_m2b.getOrigin().x();
+      pose_6d_geo.transform.translation.y = tf2_trans_m2b.getOrigin().y();
+      pose_6d_geo.transform.translation.z = tf2_trans_m2b.getOrigin().z();
+      pose_6d_geo.transform.rotation.x = tf2_trans_m2b.getRotation().x();
+      pose_6d_geo.transform.rotation.y = tf2_trans_m2b.getRotation().y();
+      pose_6d_geo.transform.rotation.z = tf2_trans_m2b.getRotation().z();
+      pose_6d_geo.transform.rotation.w = tf2_trans_m2b.getRotation().w();
+      cloudKeyPoses6DBaseLink_geo.push_back(pose_6d_geo);
+    }
+    if (!save_pcd_checked(mapping_dir_string + "/poses.pcd", cloudKeyPoses6DBaseLink, "poses")) {
+      return;
+    }
+
+    pcl::PointCloud<pcl::PointXYZ> edges;
+    int edge_number = 0;
+    for (auto it = pose_graph_.begin(); it != pose_graph_.end(); it++) {
+      pcl::PointXYZ pt;
+      pt.x = edge_number;
+      pt.y = (*it).first;
+      pt.z = (*it).second;
+      edges.push_back(pt);
+      edge_number++;
+    }
+    if (!save_pcd_checked(mapping_dir_string + "/edges.pcd", edges, "edges")) {
+      return;
+    }
+
+    std::string pcd_dir = mapping_dir_string + "/pcd";
+    std::filesystem::create_directories(pcd_dir);
+    for (size_t i = 0; i < pose6d_size; ++i) {
+      int thisKeyInd = static_cast<int>(cloudKeyPoses6D->points[i].intensity);
+      if (!valid_key_index(thisKeyInd, "keyframe pcd")) {
+        continue;
+      }
+
+      Eigen::Affine3d af3 = tf2::transformToEigen(cloudKeyPoses6DBaseLink_geo[i]);
+
+      keyFrameCorner.reset(new pcl::PointCloud<PointType>());
+      *keyFrameCorner += (*cornerCloudKeyFrames[thisKeyInd]);
+      *keyFrameCorner = *transformPointCloud(keyFrameCorner, &cloudKeyPoses6D->points[i]);
+      pcl::transformPointCloud(*keyFrameCorner, *keyFrameCorner, trans_m2ci_af3_);
+      pcl::transformPointCloud(*keyFrameCorner, *keyFrameCorner, af3.inverse());
+      if (!save_pcd_checked(pcd_dir + "/" + std::to_string(thisKeyInd) + "_feature.pcd", *keyFrameCorner, "feature keyframe")) {
+        return;
+      }
+
+      keyFrameGround.reset(new pcl::PointCloud<PointType>());
+      *keyFrameGround += (*patchedGroundKeyFrames[thisKeyInd]);
+      *keyFrameGround = *transformPointCloud(keyFrameGround, &cloudKeyPoses6D->points[i]);
+      pcl::transformPointCloud(*keyFrameGround, *keyFrameGround, trans_m2ci_af3_);
+      pcl::transformPointCloud(*keyFrameGround, *keyFrameGround, af3.inverse());
+      if (!save_pcd_checked(pcd_dir + "/" + std::to_string(thisKeyInd) + "_ground.pcd", *keyFrameGround, "ground keyframe")) {
+        return;
+      }
+
+      keyFrameSurface.reset(new pcl::PointCloud<PointType>());
+      *keyFrameSurface += (*surfCloudKeyFrames[thisKeyInd]);
+      *keyFrameSurface = *transformPointCloud(keyFrameSurface, &cloudKeyPoses6D->points[i]);
+      pcl::transformPointCloud(*keyFrameSurface, *keyFrameSurface, trans_m2ci_af3_);
+      pcl::transformPointCloud(*keyFrameSurface, *keyFrameSurface, af3.inverse());
+      if (!save_pcd_checked(pcd_dir + "/" + std::to_string(thisKeyInd) + "_surface.pcd", *keyFrameSurface, "surface keyframe")) {
+        return;
+      }
+    }
+  } catch (const std::exception &e) {
+    RCLCPP_ERROR(this->get_logger(), "Exception while saving map: %s", e.what());
+    return;
   }
-  else if ( env_p == NULL ) {
-    mapping_dir_string = std::string("/tmp/") + currentDateTime();
-    std::filesystem::create_directories(mapping_dir_string);
-    RCLCPP_INFO(this->get_logger(), "Create dir: %s", mapping_dir_string.c_str());
-  } else {
-    mapping_dir_string = std::string( env_p ) + currentDateTime();
-    std::filesystem::create_directories(mapping_dir_string);
-    RCLCPP_INFO(this->get_logger(), "Create dir: %s", mapping_dir_string.c_str());
-  }
-
-
-  // save map
-  for (int i = 0; i < cloudKeyPoses3D->points.size(); ++i) {
-    int thisKeyInd = (int)cloudKeyPoses3D->points[i].intensity;
-    *completeGlobalStitch += *transformPointCloud(
-        cornerCloudKeyFrames[thisKeyInd], &cloudKeyPoses6D->points[thisKeyInd]);
-    //*completeGlobalStitch += *transformPointCloud(
-    //    surfCloudKeyFrames[thisKeyInd], &cloudKeyPoses6D->points[thisKeyInd]);
-    //*completeGlobalStitch +=
-    //    *transformPointCloud(outlierCloudKeyFrames[thisKeyInd],
-    //                         &cloudKeyPoses6D->points[thisKeyInd]);
-  }
-
-  downSizeFilterFinalStitch.setInputCloud(completeGlobalStitch);
-  downSizeFilterFinalStitch.filter(*completeGlobalStitch);
-  pcl::transformPointCloud(*completeGlobalStitch, *completeGlobalStitch, trans_s2c_af3_);
-  pcl::io::savePCDFileASCII(mapping_dir_string + "/map.pcd", *completeGlobalStitch);
-  
-  //save surface
-  completeGlobalStitch.reset(new pcl::PointCloud<PointType>());
-  for (int i = 0; i < cloudKeyPoses3D->points.size(); ++i) {
-    int thisKeyInd = (int)cloudKeyPoses3D->points[i].intensity;
-    *completeGlobalStitch += *transformPointCloud(
-        patchedGroundKeyFrames[thisKeyInd], &cloudKeyPoses6D->points[thisKeyInd]);
-  }
-  downSizeFilterFinalStitch.setInputCloud(completeGlobalStitch);
-  downSizeFilterFinalStitch.filter(*completeGlobalStitch);
-  pcl::transformPointCloud(*completeGlobalStitch, *completeGlobalStitch, trans_s2c_af3_);
-  pcl::io::savePCDFileASCII(mapping_dir_string + "/ground.pcd", *completeGlobalStitch);
-  
-  completeGlobalStitch.reset(new pcl::PointCloud<PointType>());
-  for (int i = 0; i < cloudKeyPoses3D->points.size(); ++i) {
-    int thisKeyInd = (int)cloudKeyPoses3D->points[i].intensity;
-    //*completeGlobalStitch += *transformPointCloud(
-    //    cornerCloudKeyFrames[thisKeyInd], &cloudKeyPoses6D->points[thisKeyInd]);
-    //*completeGlobalStitch += *transformPointCloud(
-    //    surfCloudKeyFrames[thisKeyInd], &cloudKeyPoses6D->points[thisKeyInd]);
-    //*completeGlobalStitch +=
-    //    *transformPointCloud(outlierCloudKeyFrames[thisKeyInd],
-    //                         &cloudKeyPoses6D->points[thisKeyInd]);
-  }
-
-  //@ -----Write poses-----
-  pcl::PointCloud<PointTypePose> cloudKeyPoses6DBaseLink;
-  std::vector<geometry_msgs::msg::TransformStamped> cloudKeyPoses6DBaseLink_geo;
-  for(auto it = cloudKeyPoses6D->points.begin(); it!=cloudKeyPoses6D->points.end(); it++){
-    tf2::Transform tf2_trans_ci2c;
-    tf2::Quaternion q;
-    q.setRPY( (*it).roll, (*it).pitch, (*it).yaw);
-    tf2_trans_ci2c.setRotation(q);
-    tf2_trans_ci2c.setOrigin(tf2::Vector3((*it).x, (*it).y, (*it).z));
-
-    tf2::Transform tf2_trans_m2c, tf2_trans_m2s, tf2_trans_m2b;
-    tf2_trans_m2c.mult(tf2_trans_m2ci_, tf2_trans_ci2c);
-    tf2_trans_m2s.mult(tf2_trans_m2c, tf2_trans_c2s_);
-    tf2_trans_m2b.mult(tf2_trans_m2s, tf2_trans_b2s_.inverse());
-
-    PointTypePose pt;
-    pt.x = tf2_trans_m2b.getOrigin().x();
-    pt.y = tf2_trans_m2b.getOrigin().y();
-    pt.z = tf2_trans_m2b.getOrigin().z();
-    tf2::Matrix3x3 m(tf2_trans_m2b.getRotation());
-    double roll, pitch, yaw;
-    m.getRPY(roll, pitch, yaw);
-    pt.roll = roll;
-    pt.pitch = pitch;
-    pt.yaw = yaw;
-    pt.intensity = (*it).intensity;
-    cloudKeyPoses6DBaseLink.push_back(pt);
-
-    geometry_msgs::msg::TransformStamped pose_6d_geo;
-    pose_6d_geo.transform.translation.x = tf2_trans_m2b.getOrigin().x();
-    pose_6d_geo.transform.translation.y = tf2_trans_m2b.getOrigin().y();
-    pose_6d_geo.transform.translation.z = tf2_trans_m2b.getOrigin().z();
-    pose_6d_geo.transform.rotation.x = tf2_trans_m2b.getRotation().x();
-    pose_6d_geo.transform.rotation.y = tf2_trans_m2b.getRotation().y();
-    pose_6d_geo.transform.rotation.z = tf2_trans_m2b.getRotation().z();
-    pose_6d_geo.transform.rotation.w = tf2_trans_m2b.getRotation().w();
-    cloudKeyPoses6DBaseLink_geo.push_back(pose_6d_geo);
-  }  
-  pcl::io::savePCDFileASCII(mapping_dir_string + "/poses.pcd", cloudKeyPoses6DBaseLink);
-  
-  //@ -----Write graph-----
-  pcl::PointCloud<pcl::PointXYZ> edges;
-  int edge_number = 0;
-  for(auto it = pose_graph_.begin(); it!=pose_graph_.end(); it++){
-    pcl::PointXYZ pt;
-    pt.x = edge_number;
-    pt.y = (*it).first;
-    pt.z = (*it).second;
-    edges.push_back(pt);
-    edge_number++;
-  }
-  pcl::io::savePCDFileASCII(mapping_dir_string + "/edges.pcd", edges);
-
-  //@ -----Write pcd-----
-  std::string pcd_dir = mapping_dir_string + "/pcd";
-  std::filesystem::create_directories(pcd_dir);
-  for (int i = 0; i < cloudKeyPoses6D->points.size(); ++i) {
-
-    Eigen::Affine3d af3 = tf2::transformToEigen(cloudKeyPoses6DBaseLink_geo[i]);
-
-    keyFrameCorner.reset(new pcl::PointCloud<PointType>());
-    int thisKeyInd = (int)cloudKeyPoses6D->points[i].intensity;
-    *keyFrameCorner += (*cornerCloudKeyFrames[thisKeyInd]);
-    *keyFrameCorner= *transformPointCloud(keyFrameCorner, &cloudKeyPoses6D->points[i]);
-    pcl::transformPointCloud(*keyFrameCorner, *keyFrameCorner, trans_m2ci_af3_);
-    pcl::transformPointCloud(*keyFrameCorner, *keyFrameCorner, af3.inverse());
-    pcl::io::savePCDFileASCII(pcd_dir + "/" + std::to_string(thisKeyInd) + "_feature.pcd", *keyFrameCorner);
-
-    keyFrameGround.reset(new pcl::PointCloud<PointType>());
-    *keyFrameGround += (*patchedGroundKeyFrames[thisKeyInd]);
-    *keyFrameGround= *transformPointCloud(keyFrameGround, &cloudKeyPoses6D->points[i]);
-    pcl::transformPointCloud(*keyFrameGround, *keyFrameGround, trans_m2ci_af3_);
-    pcl::transformPointCloud(*keyFrameGround, *keyFrameGround, af3.inverse());
-    pcl::io::savePCDFileASCII(pcd_dir + "/" + std::to_string(thisKeyInd) + "_ground.pcd", *keyFrameGround);
-
-    keyFrameSurface.reset(new pcl::PointCloud<PointType>());
-    *keyFrameSurface += (*surfCloudKeyFrames[thisKeyInd]);
-    *keyFrameSurface= *transformPointCloud(keyFrameSurface, &cloudKeyPoses6D->points[i]);
-    pcl::transformPointCloud(*keyFrameSurface, *keyFrameSurface, trans_m2ci_af3_);
-    pcl::transformPointCloud(*keyFrameSurface, *keyFrameSurface, af3.inverse());
-    pcl::io::savePCDFileASCII(pcd_dir + "/" + std::to_string(thisKeyInd) + "_surface.pcd", *keyFrameSurface);
-  }  
 
 }
 
@@ -542,6 +585,7 @@ void MapOptimization::allocateMemory() {
 void MapOptimization::loopClosureThread()
 {
   if(_loop_closure_enabled){
+    std::lock_guard<std::mutex> lock(state_mutex_);
     performLoopClosure();
   }
 }
@@ -883,6 +927,7 @@ void MapOptimization::publishTF() {
 }
 
 void MapOptimization::publishKeyPosesAndFrames() {
+  std::lock_guard<std::mutex> lock(state_mutex_);
   
   if(!has_m2ci_af3_)
     return;
@@ -1340,6 +1385,7 @@ void MapOptimization::addEdgeFromPose(int pose_1, int pose_2, gtsam::Pose3 poseF
 }
 
 void MapOptimization::extractSurroundingKeyFrames() {
+  std::lock_guard<std::mutex> lock(state_mutex_);
 
   if (cloudKeyPoses3D->points.empty() == true) return;
   
@@ -1832,6 +1878,7 @@ void MapOptimization::scan2MapOptimization() {
 }
 
 void MapOptimization::saveKeyFramesAndFactor() {
+  std::lock_guard<std::mutex> lock(state_mutex_);
 
   currentRobotPos_.x = transformAftMapped[3];
   currentRobotPos_.y = transformAftMapped[4];
@@ -2033,6 +2080,7 @@ void MapOptimization::saveKeyFramesAndFactor() {
 }
 
 void MapOptimization::correctPoses() {
+  std::lock_guard<std::mutex> lock(state_mutex_);
 
   if (aLoopIsClosed == true) {
     recentCornerCloudKeyFrames.clear();
