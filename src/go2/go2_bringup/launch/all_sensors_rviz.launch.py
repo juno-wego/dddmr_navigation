@@ -13,7 +13,7 @@ def generate_launch_description():
             DeclareLaunchArgument("odom_source", default_value="aurora", choices=["aurora", "go2"]),
             DeclareLaunchArgument("use_go2", default_value="true"),
             DeclareLaunchArgument("use_aurora", default_value="true"),
-            DeclareLaunchArgument("use_mid360", default_value="false"),
+            DeclareLaunchArgument("use_mid360", default_value="true"),
             DeclareLaunchArgument("use_go2_camera", default_value="true"),
             DeclareLaunchArgument("lidar_frame_id", default_value="utlidar"),
             DeclareLaunchArgument("lidar_transform_x", default_value="0.0"),
