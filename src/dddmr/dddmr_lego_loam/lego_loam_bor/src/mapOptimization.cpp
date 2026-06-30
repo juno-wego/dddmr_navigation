@@ -206,14 +206,6 @@ MapOptimization::MapOptimization(std::string name,
   this->get_parameter("mapping.broadcast_external_odom_tf", broadcast_external_odom_tf_);
   RCLCPP_INFO(this->get_logger(), "mapping.broadcast_external_odom_tf: %d", broadcast_external_odom_tf_);
 
-  declare_parameter("mapping.planar_mapping_tf", rclcpp::ParameterValue(false));
-  this->get_parameter("mapping.planar_mapping_tf", planar_mapping_tf_);
-  RCLCPP_INFO(this->get_logger(), "mapping.planar_mapping_tf: %d", planar_mapping_tf_);
-
-  declare_parameter("mapping.flatten_ground_z", rclcpp::ParameterValue(false));
-  this->get_parameter("mapping.flatten_ground_z", flatten_ground_z_);
-  RCLCPP_INFO(this->get_logger(), "mapping.flatten_ground_z: %d", flatten_ground_z_);
-
   declare_parameter("mapping.ground_publish_voxel_size", rclcpp::ParameterValue(0.4));
   this->get_parameter("mapping.ground_publish_voxel_size", ground_publish_voxel_size_);
   RCLCPP_INFO(this->get_logger(), "mapping.ground_publish_voxel_size: %.2f", ground_publish_voxel_size_);
@@ -884,12 +876,6 @@ void MapOptimization::publishTF() {
   map2odom.child_frame_id = externalOdometry.header.frame_id;
   tf2::Quaternion map2odom_quat = tf2_trans_m2o.getRotation();
   tf2::Vector3 map2odom_origin = tf2_trans_m2o.getOrigin();
-  if (planar_mapping_tf_) {
-    double roll, pitch, yaw;
-    tf2::Matrix3x3(map2odom_quat).getRPY(roll, pitch, yaw);
-    map2odom_quat.setRPY(0.0, 0.0, yaw);
-    map2odom_origin.setZ(0.0);
-  }
   map2odom.transform.rotation.x = map2odom_quat.x();
   map2odom.transform.rotation.y = map2odom_quat.y();
   map2odom.transform.rotation.z = map2odom_quat.z();
@@ -909,19 +895,13 @@ void MapOptimization::publishTF() {
         externalOdometry.pose.pose.orientation.y,
         externalOdometry.pose.pose.orientation.z,
         externalOdometry.pose.pose.orientation.w);
-    if (planar_mapping_tf_) {
-      double roll, pitch, yaw;
-      tf2::Matrix3x3(odom2base_quat).getRPY(roll, pitch, yaw);
-      odom2base_quat.setRPY(0.0, 0.0, yaw);
-    }
     odom2baselink.transform.rotation.x = odom2base_quat.x();
     odom2baselink.transform.rotation.y = odom2base_quat.y();
     odom2baselink.transform.rotation.z = odom2base_quat.z();
     odom2baselink.transform.rotation.w = odom2base_quat.w();
     odom2baselink.transform.translation.x = externalOdometry.pose.pose.position.x;
     odom2baselink.transform.translation.y = externalOdometry.pose.pose.position.y;
-    odom2baselink.transform.translation.z =
-        planar_mapping_tf_ ? 0.0 : externalOdometry.pose.pose.position.z;
+    odom2baselink.transform.translation.z = externalOdometry.pose.pose.position.z;
     tf_broadcaster_->sendTransform(odom2baselink);
   }
 }
@@ -1037,11 +1017,6 @@ void MapOptimization::publishKeyPosesAndFrames() {
       continue;
     }
     pcl::transformPointCloud(*transformed, *transformed, trans_m2ci_af3_);
-    if (flatten_ground_z_) {
-      for (auto& point : transformed->points) {
-        point.z = 0.0f;
-      }
-    }
     *global_ground += *transformed;
   }
 
