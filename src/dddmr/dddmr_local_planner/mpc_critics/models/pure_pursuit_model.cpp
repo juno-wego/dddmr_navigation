@@ -30,10 +30,42 @@
 */
 #include <mpc_critics/pure_pursuit_model.h>
 
+#include <cmath>
+
 PLUGINLIB_EXPORT_CLASS(mpc_critics::PurePursuitModel, mpc_critics::ScoringModel)
 
 namespace mpc_critics
 {
+
+namespace
+{
+
+double planarDistance(
+  const geometry_msgs::msg::PoseStamped& a,
+  const geometry_msgs::msg::PoseStamped& b)
+{
+  const double dx = a.pose.position.x - b.pose.position.x;
+  const double dy = a.pose.position.y - b.pose.position.y;
+  return std::hypot(dx, dy);
+}
+
+double getYaw(const geometry_msgs::msg::Quaternion& q_msg)
+{
+  tf2::Quaternion q;
+  tf2::convert(q_msg, q);
+  double roll;
+  double pitch;
+  double yaw;
+  tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+  return yaw;
+}
+
+double shortestAngularDistance(double from, double to)
+{
+  return std::atan2(std::sin(to - from), std::cos(to - from));
+}
+
+}  // namespace
 
 PurePursuitModel::PurePursuitModel(){
   return;
@@ -54,63 +86,61 @@ void PurePursuitModel::onInitialize(){
   node_->get_parameter(name_ + ".orientation_weight", orientation_weight_);
   RCLCPP_INFO(node_->get_logger().get_child(name_), "orientation_weight: %.2f", orientation_weight_);
 
+  node_->declare_parameter(name_ + ".lookahead_distance", rclcpp::ParameterValue(0.8));
+  node_->get_parameter(name_ + ".lookahead_distance", lookahead_distance_);
+  RCLCPP_INFO(node_->get_logger().get_child(name_), "lookahead_distance: %.2f", lookahead_distance_);
+
 }
 
 
 double PurePursuitModel::scoreTrajectory(base_trajectory::Trajectory &traj){
 
-  if(shared_data_->prune_plan_.poses.empty() || traj.getPointsSize()<2){
+  if(shared_data_->prune_plan_.poses.size() < 2 || traj.getPointsSize()<2){
     return -4.0;  
   }
 
   geometry_msgs::msg::PoseStamped last_traj_pose = traj.getPoint(traj.getPointsSize()-1);
-  geometry_msgs::msg::PoseStamped last_prune_plan_pose = shared_data_->prune_plan_.poses.back();
+  geometry_msgs::msg::PoseStamped robot_pose;
+  robot_pose.pose.position.x = shared_data_->robot_pose_.transform.translation.x;
+  robot_pose.pose.position.y = shared_data_->robot_pose_.transform.translation.y;
+  robot_pose.pose.position.z = shared_data_->robot_pose_.transform.translation.z;
+  robot_pose.pose.orientation = shared_data_->robot_pose_.transform.rotation;
 
-  //@ create tf pose for affine computation
-  geometry_msgs::msg::TransformStamped tf_last_traj_pose, tf_last_prune_plan_pose;
-  tf_last_traj_pose.header.frame_id = shared_data_->global_frame_;
-  tf_last_traj_pose.child_frame_id = shared_data_->base_frame_;
-  tf_last_traj_pose.transform.translation.x = last_traj_pose.pose.position.x;
-  tf_last_traj_pose.transform.translation.y = last_traj_pose.pose.position.y;
-  tf_last_traj_pose.transform.translation.z = last_traj_pose.pose.position.z;
-  tf_last_traj_pose.transform.rotation = last_traj_pose.pose.orientation;
-  //@ tf of last_prune_plan_pose
-  tf_last_prune_plan_pose.header.frame_id = shared_data_->global_frame_;
-  tf_last_prune_plan_pose.child_frame_id = shared_data_->base_frame_;
-  tf_last_prune_plan_pose.transform.translation.x = last_prune_plan_pose.pose.position.x;
-  tf_last_prune_plan_pose.transform.translation.y = last_prune_plan_pose.pose.position.y;
-  tf_last_prune_plan_pose.transform.translation.z = last_prune_plan_pose.pose.position.z;
-  tf_last_prune_plan_pose.transform.rotation = last_prune_plan_pose.pose.orientation;  
+  const auto& prune_plan = shared_data_->prune_plan_.poses;
+  std::size_t nearest_index = 0;
+  double nearest_distance = std::numeric_limits<double>::max();
+  for(std::size_t i = 0; i < prune_plan.size(); ++i){
+    const double distance = planarDistance(robot_pose, prune_plan[i]);
+    if(distance < nearest_distance){
+      nearest_distance = distance;
+      nearest_index = i;
+    }
+  }
 
-  //tf_last_traj_pose
-  Eigen::Affine3d last_traj_pose_af3 = tf2::transformToEigen(tf_last_traj_pose);
-  //@ inverse last_traj_pose_af3 to get last_traj_pose->global
-  last_traj_pose_af3 = last_traj_pose_af3.inverse();
-  //@ we have global->last_prune_plan_pose
-  Eigen::Affine3d last_prune_plan_pose_af3 = tf2::transformToEigen(tf_last_prune_plan_pose);
+  std::size_t target_index = nearest_index;
+  double accumulated_distance = 0.0;
+  while(target_index + 1 < prune_plan.size() && accumulated_distance < lookahead_distance_){
+    accumulated_distance += planarDistance(prune_plan[target_index], prune_plan[target_index + 1]);
+    ++target_index;
+  }
 
-  //@ So we have last_traj_pose to last_prune_plan_pose
-  Eigen::Affine3d pose_difference_af3 = last_traj_pose_af3*last_prune_plan_pose_af3;
-  geometry_msgs::msg::TransformStamped tf_pose_difference = tf2::eigenToTransform(pose_difference_af3);
+  const geometry_msgs::msg::PoseStamped& target_pose = prune_plan[target_index];
+  const double translation_error = planarDistance(last_traj_pose, target_pose);
 
-  double r,y,p;
-  tf2::Quaternion q;
-  tf2::convert(tf_pose_difference.transform.rotation , q);
-  tf2::Matrix3x3(q).getEulerYPR(y,p,r);
+  double target_yaw = getYaw(target_pose.pose.orientation);
+  if(target_index + 1 < prune_plan.size()){
+    const auto& next_pose = prune_plan[target_index + 1];
+    const double dx = next_pose.pose.position.x - target_pose.pose.position.x;
+    const double dy = next_pose.pose.position.y - target_pose.pose.position.y;
+    if(std::hypot(dx, dy) > 1e-4){
+      target_yaw = std::atan2(dy, dx);
+    }
+  }
+  const double traj_yaw = getYaw(last_traj_pose.pose.orientation);
+  const double orientation_error = std::fabs(shortestAngularDistance(traj_yaw, target_yaw));
 
-  y = std::fmod((y+3.1416),3.1416);
-  //RCLCPP_DEBUG(node_->get_logger().get_child(name_), "yaw: %f",y);
-  double distance = sqrt(tf_pose_difference.transform.translation.x*tf_pose_difference.transform.translation.x+
-                        tf_pose_difference.transform.translation.y*tf_pose_difference.transform.translation.y+
-                        tf_pose_difference.transform.translation.z*tf_pose_difference.transform.translation.z);
-  /*
-  RCLCPP_DEBUG(node_->get_logger().get_child(name_), "Roll: %f, Pitch: %f, Yaw: %f",r,p,y);
-  RCLCPP_DEBUG(node_->get_logger().get_child(name_), "trans: %f,%f,%f", pose_difference.translation().x(), pose_difference.translation().y(), pose_difference.translation().z());
-  RCLCPP_STREAM(node_->get_logger().get_child(name_), "Affine: " << pose_difference.rotation());
-  */
-  //RCLCPP_INFO(node_->get_logger().get_child(name_), "trans: %f,%f,%f", tf_pose_difference.transform.translation.x, tf_pose_difference.transform.translation.y, tf_pose_difference.transform.translation.z);
-  //@ normalized translation vs rotation
-  return (translation_weight_*distance + orientation_weight_*y);
+  return translation_weight_ * translation_error +
+         orientation_weight_ * orientation_error;
 }
 
 }//end of name space

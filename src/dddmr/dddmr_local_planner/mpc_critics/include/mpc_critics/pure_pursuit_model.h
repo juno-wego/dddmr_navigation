@@ -46,7 +46,7 @@ class PurePursuitModel: public ScoringModel{
     virtual void onInitialize();
 
   private:
-    double translation_weight_, orientation_weight_;
+    double translation_weight_, orientation_weight_, lookahead_distance_;
 };
 
 }//end of name space

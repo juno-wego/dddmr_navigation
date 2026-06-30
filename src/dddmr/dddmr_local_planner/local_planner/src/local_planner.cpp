@@ -657,8 +657,11 @@ dddmr_sys_core::PlannerState Local_Planner::computeVelocityCommand(std::string t
       this->get_logger().get_child(name_),
       *clock_,
       5000,
-      "All trajectories are rejected by critics. report={%s}",
-      rejection_report.c_str());
+      "All trajectories are rejected by critics. generator=%s report={%s} prune_plan_points=%zu observation_points=%zu",
+      traj_gen_name.c_str(),
+      rejection_report.c_str(),
+      prune_plan_.poses.size(),
+      perception_3d_ros_->getSharedDataPtr()->aggregate_observation_->points.size());
     return dddmr_sys_core::ALL_TRAJECTORIES_FAIL;
   }
   else{

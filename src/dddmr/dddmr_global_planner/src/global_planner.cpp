@@ -654,7 +654,6 @@ nav_msgs::msg::Path GlobalPlanner::makeROSPlan(const geometry_msgs::msg::PoseSta
     else
       RCLCPP_INFO_THROTTLE(this->get_logger(), *clock_, 5000, "Path found from: %u to %u", start_id, goal_id);
     getROSPath(path, ros_path, goal);
-    ros_path.poses.push_back(goal);
     return ros_path;
   }
 }

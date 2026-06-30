@@ -280,6 +280,7 @@ mpc_critics:
     pure_pursuit:
       plugin: "mpc_critics::PurePursuitModel" # look-ahead point를 향한 추종 비용 모델
       trajectory_generator: differential_drive_simple # 이 critic이 평가할 trajectory generator 이름
+      lookahead_distance: 0.8                 # prune plan에서 traj가 향해야 할 기준 look-ahead 거리 [m]
       translation_weight: 1.0                # look-ahead 위치 오차 비용 가중치
       orientation_weight: 0.01               # pure pursuit가 자세보다 위치 추종 위주로 움직이도록 완화
     toward_global_plan:
