@@ -222,9 +222,9 @@ def generate_launch_description():
         name="aurora_base_to_go2_base_footprint",
         output="screen",
         arguments=[
-            "--x", "0",
-            "--y", "0",
-            "--z", "0",
+            "--x", "-0.9",
+            "--y", "-0.1",
+            "--z", "-0.4",
             "--roll", "0",
             "--pitch", "0",
             "--yaw", "0",
