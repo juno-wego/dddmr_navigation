@@ -1,0 +1,50 @@
+pcl_publisher:
+  ros__parameters:
+    global_frame: "map"
+    map_rotate_around_x: 0.0
+    map_rotate_around_y: 0.0
+    map_rotate_around_z: 0.0
+    map_translate_x: 0.0
+    map_translate_y: 0.0
+    map_translate_z: 0.0
+    ground_rotate_around_x: 0.0
+    ground_rotate_around_y: 0.0
+    ground_rotate_around_z: 0.0
+    ground_translate_x: 0.0
+    ground_translate_y: 0.0
+    ground_translate_z: 0.0
+    map_down_sample: 0.3
+    ground_down_sample: 0.3
+
+perception_3d_global:
+  ros__parameters:
+    global_frame: "map"
+    robot_base_frame: "base_link"
+    max_obstacle_distance: 9999.0
+    inscribed_radius: 0.5
+    inflation_descending_rate: 2.0
+    inflation_radius: 1.5
+    sensors_collected_frequency: 5.0
+    plugins: ["map"]
+    map:
+      plugin: "perception_3d::StaticLayer"
+      use_adaptive_connection: false
+      adaptive_connection_number: 20
+      radius_of_ground_connection: 1.0
+      intensity_search_radius: 1.0
+      intensity_search_punish_weight: 0.1
+      static_imposing_radius: 2.0
+      map_topic: "mapcloud"
+      ground_topic: "mapground"
+      support:
+        mapping_mode: false
+        enable_edge_detection: true
+        generate_static_graph: false
+
+global_planner:
+  ros__parameters:
+    turning_weight: 0.1
+    a_star_expanding_radius: 0.8
+    use_pre_graph: false
+    enable_detail_log: false
+    find_start_tolerance: 1.0
