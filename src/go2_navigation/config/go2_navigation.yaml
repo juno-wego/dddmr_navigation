@@ -16,7 +16,7 @@
 mcl_ip:
   ros__parameters:
     laser:
-      odom_type: "wheel_odometry"        # MCL 예측에 사용할 odometry 종류: wheel_odometry 또는 laser_odometry
+      odom_type: "laser_odometry"        # Livox/Mid360 direct sensor MCL에서는 laser_odometry가 회전 드리프트에 더 안정적
       base_ground_frame: "base_footprint" # 지면 기준 로봇 프레임. 실제 Go2 TF의 base_footprint와 일치해야 함
       num_vertical_scans: 16               # LiDAR의 수직 채널 수 또는 가상 수직 분할 수
       num_horizontal_scans: 440            # 한 회전 스캔을 분할할 수평 bin 수
@@ -151,7 +151,7 @@ p2p_move_base:
     no_plan_retry_num: 10                  # plan이 없을 때 재계획을 시도하는 횟수
     waiting_patience: 10.0                 # 일시 대기 상태를 허용하는 최대 시간 [s]
     use_recovery_behaviors: false          # false: recovery behavior를 자동 실행하지 않음
-    main_trajectory_generator: "differential_drive_simple" # 측이동 없이 linear.x/angular.z만으로 추종
+    main_trajectory_generator: "mppi"      # 선택 가능: "mppi" 또는 기존 샘플링 기반 "differential_drive_simple"(커스텀 DWA 계열)
     control_heading_rotate_start_angle: 1.6 # 주행 중 거의 반대 방향일 때만 제자리 회전으로 전환 [rad]
     control_heading_rotate_stop_angle: 0.8  # 어느 정도 맞춰지면 빨리 곡선 전진 추종으로 복귀 [rad]
 
@@ -166,12 +166,36 @@ local_planner:
     odom_topic: odom                       # local planner가 구독할 odometry topic 이름
     forward_prune: 3.0                     # 현재 로봇 앞쪽으로 남길 전역 경로 길이 [m]
     backward_prune: 1.0                    # 현재 로봇 뒤쪽으로 남길 전역 경로 길이 [m]
-    heading_tracking_distance: 0.8         # 약간 더 앞을 보고 진행 방향을 잡아 부드럽게 추종
+    heading_tracking_distance: 1.6         # 더 멀리 본 heading으로 작은 경로 꺾임에 덜 민감하게 함
     heading_align_angle: 0.5               # 시작 시에는 방향을 맞추되 주행 중에는 과하게 엄격하지 않게 유지
+    prune_plan_max_deviation: 2.0          # global path에서 조금 벗어나도 prune/local tracking을 계속 허용
     prune_plane_timeout: 3.0               # 오래된 prune plan에 끌려가지 않도록 유지 시간 단축
     xy_goal_tolerance: 0.35                # goal 판정을 더 타이트하게 해서 중간에 느슨하게 끝나지 않게 함 [m]
     yaw_goal_tolerance: 0.52               # goal yaw 허용 오차 약 30 deg
-    controller_frequency: 15.0             # 추종 반응성을 약간 높임 [Hz]
+    controller_frequency: 15.0             # MPPI 계산 여유를 유지하면서 충분한 추종 주기 확보 [Hz]
+    mppi:
+      batch_size: 320                      # 후보를 조금 더 넓게 보고 덜 들쭉날쭉한 제어 선택
+      iterations: 2                        # nominal control 갱신 반복 횟수
+      horizon_steps: 20                    # 더 긴 horizon으로 stop-go 대신 완만한 arc 선호
+      dt: 0.10                             # 약간 긴 step으로 멀리 내다보는 제어
+      lambda: 0.45                         # 샘플 평균화를 조금 더 강하게 해서 명령 튐 완화
+      noise_vx: 0.08                       # 전진 속도 샘플 노이즈를 줄여 속도 출렁임 완화 [m/s]
+      noise_wz: 0.12                       # yaw 속도 노이즈를 더 줄여 좌우 흔들림 완화 [rad/s]
+      max_vel_x: 0.42                      # MPPI 최대 전진 속도 상향 [m/s]
+      min_vel_x: 0.02                      # 저속 곡선 추종 여유 확보
+      max_vel_theta: 0.75                  # 과한 yaw 반응을 줄여 map/heading 출렁임 완화 [rad/s]
+      acc_lim_x: 0.90                      # 출발/재가속이 너무 굼뜨지 않게 완화 [m/s^2]
+      acc_lim_theta: 1.10                  # 회전 응답을 조금 눌러 덜 꺾이게 함 [rad/s^2]
+      weight_path: 1.0                     # 경로를 너무 빡빡하게 물지 않도록 더 완화
+      weight_goal: 4.5                     # lookahead 목표를 향해 자연스럽게 끌어감
+      weight_heading: 0.20                 # 작은 꺾임 path heading 집착을 더 낮춤
+      weight_obstacle: 2.8                 # 속도 상승분만큼 장애물 회피 비용은 소폭 강화
+      weight_smooth: 0.75                  # 제어 입력 변화량 억제로 더 부드럽게
+      weight_effort: 0.03                  # 큰 속도 자체 패널티는 줄여 과도한 감속 방지
+      forward_reward: 1.0                  # 계속 전진하는 해를 더 선호
+      lookahead_distance: 2.6              # 더 먼 목표점을 보고 부드럽게 코너 진입 [m]
+      target_heading_distance: 1.2         # target yaw를 더 먼 path 방향으로 잡아 10cm 지그재그 무시
+      obstacle_margin: 0.12                # 속도 상향에 맞춰 안전 여유 조금 증가 [m]
 
     cuboid:
       flb: [0.42, 0.36, 0.0]               # front-left-bottom: 전방 좌측 하단 꼭짓점 [m]
@@ -313,13 +337,17 @@ perception_3d_local:
     inflation_descending_rate: 2.0          # obstacle에서 멀어질수록 inflation cost가 감소하는 비율
     inflation_radius: 1.5                   # obstacle 주변 cost inflation 반경 [m]
     sensors_collected_frequency: 10.0       # sensor input을 수집/통합하는 주기 [Hz]
-    plugins: ["map", "path_blocked_strategy", "lidar"] # 사용할 static map, path blockage, LiDAR layer 목록
+    plugins: ["map", "no_entry_layer", "path_blocked_strategy", "lidar"] # static map + 금지구역 + path blockage + LiDAR
     map:
       plugin: "perception_3d::StaticLayer" # 저장된 지도 기반 정적 obstacle/ground layer 구현체
       is_local_planner: true                # true: local planner용 layer로 동작
       mapping_mode: false                   # false: navigation 중 정적 지도를 새로 생성/갱신하지 않음
       map_topic: "mapcloud"                 # 정적 전체 지도 point cloud topic
       ground_topic: "mapground"            # 정적 지도에서 ground point cloud topic
+    no_entry_layer:
+      plugin: "perception_3d::NoEntryLayer" # 명시적인 keepout/no-entry zone layer
+      no_entry_zone_pcd_file_dir: ""        # 런치에서 실제 zone yaml 절대경로로 주입
+      inflation_distance: 0.9               # 금지구역 주변 ground node까지 함께 lethal 처리 [m]
     path_blocked_strategy:
       plugin: "perception_3d::PathBlockedStrategy" # 현재 경로가 obstacle로 막혔는지 판단하는 전략
       check_radius: 0.18                    # 코너 안쪽 스침에 덜 민감하게 반응 [m]
@@ -354,7 +382,7 @@ perception_3d_global:
     inflation_descending_rate: 2.0          # obstacle에서 멀어질수록 inflation cost가 감소하는 비율
     inflation_radius: 1.5                   # obstacle 주변 cost inflation 반경 [m]
     sensors_collected_frequency: 10.0       # sensor input을 수집/통합하는 주기 [Hz]
-    plugins: ["map"]                        # 전역 경로는 저장된 정적 지도 위주로 계산해 경로 급변을 줄임
+    plugins: ["map", "no_entry_layer"]      # 정적 지도 + 명시적 keepout zone 기반으로 전역 경로 계산
     dgraph_publish_frequency: 0.5           # dynamic graph 또는 global connectivity graph publish 주기 [Hz]
     map:
       plugin: "perception_3d::StaticLayer" # 저장된 지도 기반 정적 obstacle/ground layer 구현체
@@ -372,6 +400,10 @@ perception_3d_global:
         mapping_mode: false                 # false: global static layer가 navigation 중 지도를 새로 생성/갱신하지 않음
         enable_edge_detection: true         # true: 지도에서 edge/낙차 경계를 검출하여 통행 불가 요소로 사용
         generate_static_graph: false        # false: static graph를 별도 생성하지 않음
+    no_entry_layer:
+      plugin: "perception_3d::NoEntryLayer" # 전역 경로용 명시적 keepout/no-entry zone layer
+      no_entry_zone_pcd_file_dir: ""        # 런치에서 실제 zone yaml 절대경로로 주입
+      inflation_distance: 1.0               # 전역 graph에서 금지구역 주변을 더 넓게 차단 [m]
     lidar:
       plugin: "perception_3d::MultiLayerSpinningLidar" # 분할 LiDAR cloud를 global obstacle layer로 변환하는 구현체
       is_local_planner: false               # false: global planner용 LiDAR layer로 동작

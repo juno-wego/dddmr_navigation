@@ -3,84 +3,105 @@
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
+
 from dddmr_sys_core.action import PToPMoveBase
-from geometry_msgs.msg import PoseStamped, PointStamped
-from rclpy.executors import MultiThreadedExecutor
-from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
-from rclpy.node import Node
-import time
-class Nav2dGoalSub():
-    
-    def __init__(self, node, m_callback_group):
-        self.node_ = node
-        self.subscription = self.node_.create_subscription(PoseStamped, 'goal_pose_3d', self.goalCB, 3, callback_group=m_callback_group)
-        self.subscription2 = self.node_.create_subscription(PointStamped, 'clicked_point', self.clicked_pointCB, 3, callback_group=m_callback_group)
-        self._action_client = ActionClient(self.node_, PToPMoveBase, 'p2p_move_base')
-        self.nav2d_goal = []
+from geometry_msgs.msg import PointStamped, PoseStamped
 
 
-    def goalCB(self, msg):
-        self.node_.get_logger().info("Got goal at: %.2f, %.2f, %.2f"  % (msg.pose.position.x, msg.pose.position.y, msg.pose.position.z))
-        self.nav2d_goal = PToPMoveBase.Goal()
-        self.nav2d_goal.target_pose = msg
+class GoalRelay(Node):
 
-    def clicked_pointCB(self, msg):
-        self.node_.get_logger().info("Got clicked point at: %.2f, %.2f, %.2f"  % (msg.point.x, msg.point.y, msg.point.z))
-        a_pose = PoseStamped()
-        a_pose.pose.position.x = msg.point.x
-        a_pose.pose.position.y = msg.point.y
-        a_pose.pose.position.z = msg.point.z
-        a_pose.pose.orientation.w = 1.0
-        a_pose.header.frame_id = "map"
-        self.nav2d_goal = PToPMoveBase.Goal()
-        self.nav2d_goal.target_pose = a_pose
+    def __init__(self):
+        super().__init__("clicked2p2p")
+        self.declare_parameter("global_frame", "map")
+        self.global_frame = self.get_parameter("global_frame").get_parameter_value().string_value
 
-    def send_goal(self):
+        self._action_client = ActionClient(self, PToPMoveBase, "/p2p_move_base")
+        self._goal_pose_sub = self.create_subscription(
+            PoseStamped, "goal_pose_3d", self.goal_cb, 10)
+        self._clicked_point_sub = self.create_subscription(
+            PointStamped, "clicked_point", self.clicked_point_cb, 10)
 
-        self.node_.get_logger().info("Sending Goal")
+    def goal_cb(self, msg: PoseStamped):
+        goal_pose = PoseStamped()
+        goal_pose.header = msg.header
+        goal_pose.pose = msg.pose
+        if not goal_pose.header.frame_id:
+            goal_pose.header.frame_id = self.global_frame
+        if (
+            goal_pose.pose.orientation.x == 0.0 and
+            goal_pose.pose.orientation.y == 0.0 and
+            goal_pose.pose.orientation.z == 0.0 and
+            goal_pose.pose.orientation.w == 0.0
+        ):
+            goal_pose.pose.orientation.w = 1.0
 
-        self._action_client.wait_for_server()
-        self._send_goal_future = self._action_client.send_goal_async(self.nav2d_goal)
-        
-        self._send_goal_future.add_done_callback(self.goal_response_callback)
-        
-        self.node_.get_logger().info("Goal sent. Waiting response")
+        self.get_logger().info(
+            "Got 3D goal at: %.2f, %.2f, %.2f in %s" % (
+                goal_pose.pose.position.x,
+                goal_pose.pose.position.y,
+                goal_pose.pose.position.z,
+                goal_pose.header.frame_id,
+            )
+        )
+        self.send_goal(goal_pose)
+
+    def clicked_point_cb(self, msg: PointStamped):
+        goal_pose = PoseStamped()
+        goal_pose.header = msg.header
+        goal_pose.header.frame_id = msg.header.frame_id or self.global_frame
+        goal_pose.pose.position.x = msg.point.x
+        goal_pose.pose.position.y = msg.point.y
+        goal_pose.pose.position.z = msg.point.z
+        goal_pose.pose.orientation.w = 1.0
+
+        self.get_logger().info(
+            "Got clicked point at: %.2f, %.2f, %.2f in %s" % (
+                goal_pose.pose.position.x,
+                goal_pose.pose.position.y,
+                goal_pose.pose.position.z,
+                goal_pose.header.frame_id,
+            )
+        )
+        self.send_goal(goal_pose)
+
+    def send_goal(self, pose: PoseStamped):
+        if not self._action_client.wait_for_server(timeout_sec=1.0):
+            self.get_logger().warn("p2p_move_base action server is not available yet.")
+            return
+
+        goal = PToPMoveBase.Goal()
+        goal.target_pose = pose
+        self.get_logger().info("Sending goal to /p2p_move_base")
+        send_goal_future = self._action_client.send_goal_async(goal)
+        send_goal_future.add_done_callback(self.goal_response_callback)
 
     def goal_response_callback(self, future):
         goal_handle = future.result()
-        if not goal_handle.accepted:
-            self.node_.get_logger().info('Goal rejected :(')
+        if goal_handle is None or not goal_handle.accepted:
+            self.get_logger().warn("Goal rejected")
             return
 
-        self.node_.get_logger().info('Goal accepted :)')
+        self.get_logger().info("Goal accepted")
+        result_future = goal_handle.get_result_async()
+        result_future.add_done_callback(self.goal_result_callback)
+
+    def goal_result_callback(self, future):
+        result = future.result()
+        if result is None:
+            self.get_logger().warn("Goal result is empty")
+            return
+        self.get_logger().info("Goal finished with status %d" % result.status)
+
 
 def main(args=None):
-
     rclpy.init(args=args)
-
-    action_server_group = MutuallyExclusiveCallbackGroup()
-    action_client_group = MutuallyExclusiveCallbackGroup()
-
-    node_ = rclpy.create_node('clicked2p2p')
-    
-
-    Nav2d_Goal_Sub = Nav2dGoalSub(node_, action_server_group)
-
-    executor = MultiThreadedExecutor()
-    executor.add_node(node_)
-    
-    
-
-    while rclpy.ok():
-        
-        if(Nav2d_Goal_Sub.nav2d_goal):
-            Nav2d_Goal_Sub.send_goal()
-            Nav2d_Goal_Sub.nav2d_goal = []
-
-        rclpy.spin_once(node_, timeout_sec=1.0)
-
-    
+    node = GoalRelay()
+    try:
+        rclpy.spin(node)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

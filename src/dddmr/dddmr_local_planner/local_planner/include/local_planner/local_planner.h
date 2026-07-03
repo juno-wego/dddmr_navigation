@@ -36,6 +36,7 @@
 #include <unordered_map>
 #include <set>
 #include <queue> 
+#include <random>
 #include <angles/angles.h>
 /*For perception plugin*/
 #include <perception_3d/perception_3d_ros.h>
@@ -71,6 +72,7 @@ class Local_Planner : public rclcpp::Node {
 
       void setPlan(const std::vector<geometry_msgs::msg::PoseStamped>& orig_global_plan);
       dddmr_sys_core::PlannerState computeVelocityCommand(std::string traj_gen_name, base_trajectory::Trajectory& best_traj);
+      dddmr_sys_core::PlannerState computeVelocityCommandMPPI(base_trajectory::Trajectory& best_traj);
       void getBestTrajectory(std::string traj_gen_name, base_trajectory::Trajectory& best_traj);
 
       //@ shared data for trajectory generator, we manage the variables by this way for future changed to ROS2
@@ -151,6 +153,33 @@ class Local_Planner : public rclcpp::Node {
       //void normal2quaternion();
       void prunePlan(double forward_distance, double backward_distance);
       double getDistanceBTWPoseStamp(const geometry_msgs::msg::PoseStamped& a, const geometry_msgs::msg::PoseStamped& b);
+      bool getLookaheadTarget(double lookahead_distance, geometry_msgs::msg::PoseStamped& target_pose, double& target_yaw);
+      base_trajectory::Trajectory rolloutMPPI(
+        const std::vector<double>& vx_sequence,
+        const std::vector<double>& wz_sequence,
+        double dt);
+      double scoreMPPI(
+        const base_trajectory::Trajectory& traj,
+        const std::vector<double>& vx_sequence,
+        const std::vector<double>& wz_sequence,
+        const pcl::KdTreeFLANN<pcl::PointXYZI>& prune_plan_kdtree,
+        const pcl::KdTreeFLANN<pcl::PointXYZI>& obstacle_kdtree,
+        bool has_obstacles,
+        const geometry_msgs::msg::PoseStamped& target_pose,
+        double target_yaw) const;
+      pcl::PointCloud<pcl::PointXYZ> buildCuboidForPose(const geometry_msgs::msg::PoseStamped& pose) const;
+      base_trajectory::cuboid_min_max_t getCuboidMinMax(
+        const pcl::PointCloud<pcl::PointXYZ>& cuboid) const;
+      double clampValue(double value, double min_value, double max_value) const;
+      double clampVelocityByAcceleration(
+        double desired,
+        double previous,
+        double acc_limit,
+        double dt,
+        double min_value,
+        double max_value) const;
+      void initializeMPPINominalControl(double current_linear_speed, double current_angular_speed);
+      void shiftMPPINominalControl();
 
       bool compute_best_trajectory_in_odomCb_;
 
@@ -159,6 +188,7 @@ class Local_Planner : public rclcpp::Node {
          The variable should be adapt to vehicle speed!!!
       */
       double forward_prune_, backward_prune_, heading_tracking_distance_, heading_align_angle_;
+      double prune_plan_max_deviation_;
 
       /*Timer for robust system design*/
       double prune_plane_timeout_;
@@ -171,6 +201,17 @@ class Local_Planner : public rclcpp::Node {
       rclcpp::Time control_loop_time_;
 
       std::map<std::string, std::vector<base_trajectory::Trajectory>> rejected_trajectories_;
+      std::vector<pcl::PointXYZ> base_cuboid_vertices_;
+      std::mt19937 mppi_rng_;
+      bool mppi_nominal_initialized_;
+      int mppi_batch_size_, mppi_iterations_, mppi_horizon_steps_;
+      double mppi_dt_, mppi_lambda_, mppi_noise_vx_, mppi_noise_wz_;
+      double mppi_max_vel_x_, mppi_min_vel_x_, mppi_max_vel_theta_;
+      double mppi_acc_lim_x_, mppi_acc_lim_theta_;
+      double mppi_weight_path_, mppi_weight_goal_, mppi_weight_heading_;
+      double mppi_weight_obstacle_, mppi_weight_smooth_, mppi_weight_effort_, mppi_forward_reward_;
+      double mppi_lookahead_distance_, mppi_target_heading_distance_, mppi_obstacle_margin_;
+      std::vector<double> mppi_nominal_vx_, mppi_nominal_wz_;
 
     protected:
 

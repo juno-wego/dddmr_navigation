@@ -59,14 +59,12 @@ void P2PMoveBase::handle_accepted(const std::shared_ptr<rclcpp_action::ServerGoa
 {
 
   if (is_active(current_handle_)){
-    RCLCPP_INFO(this->get_logger(), "An older goal is active, cancelling current one.");
+    RCLCPP_INFO(this->get_logger(), "An older goal is active, aborting it and accepting the new goal.");
     auto result = std::make_shared<dddmr_sys_core::action::PToPMoveBase::Result>();
     current_handle_->abort(result);
-    return;
   }
-  else{
-    current_handle_ = goal_handle;
-  }
+  current_handle_.reset();
+  current_handle_ = goal_handle;
   // this needs to return quickly to avoid blocking the executor, so spin up a new thread
   std::thread{std::bind(&P2PMoveBase::executeCb, this, std::placeholders::_1), goal_handle}.detach();
 }
@@ -282,6 +280,16 @@ bool P2PMoveBase::executeCycle(const std::shared_ptr<rclcpp_action::ServerGoalHa
       STATE_->oscillation_pose_ = STATE_->global_pose_;
       STATE_->last_oscillation_reset_ = clock_->now();
     }
+
+    auto compute_selected_command =
+      [&](const std::string& controller_name, base_trajectory::Trajectory& best_traj)
+      -> dddmr_sys_core::PlannerState
+    {
+      if(controller_name == "mppi"){
+        return LP_->computeVelocityCommandMPPI(best_traj);
+      }
+      return LP_->computeVelocityCommand(controller_name, best_traj);
+    };
 
 
     if(STATE_->isCurrentDecision("d_initial")){
@@ -514,31 +522,37 @@ bool P2PMoveBase::executeCycle(const std::shared_ptr<rclcpp_action::ServerGoalHa
       }
 
       base_trajectory::Trajectory best_traj;
-      const double heading_deviation = std::fabs(LP_->getPathHeadingDeviation());
-      if(rotate_for_heading_during_control_){
-        if(heading_deviation <= control_heading_rotate_stop_angle_){
-          rotate_for_heading_during_control_ = false;
-          RCLCPP_INFO(
-            this->get_logger(),
-            "Heading deviation %.2f is below stop threshold %.2f, resuming curved forward tracking.",
-            heading_deviation,
-            control_heading_rotate_stop_angle_);
-        }
+      const bool use_mppi_main_controller = STATE_->main_trajectory_generator_ == "mppi";
+      if(use_mppi_main_controller){
+        rotate_for_heading_during_control_ = false;
       }
-      else if(heading_deviation >= control_heading_rotate_start_angle_){
-        rotate_for_heading_during_control_ = true;
-        RCLCPP_WARN(
-          this->get_logger(),
-          "Heading deviation %.2f exceeds start threshold %.2f, rotating in place before moving.",
-          heading_deviation,
-          control_heading_rotate_start_angle_);
+      else{
+        const double heading_deviation = std::fabs(LP_->getPathHeadingDeviation());
+        if(rotate_for_heading_during_control_){
+          if(heading_deviation <= control_heading_rotate_stop_angle_){
+            rotate_for_heading_during_control_ = false;
+            RCLCPP_INFO(
+              this->get_logger(),
+              "Heading deviation %.2f is below stop threshold %.2f, resuming curved forward tracking.",
+              heading_deviation,
+              control_heading_rotate_stop_angle_);
+          }
+        }
+        else if(heading_deviation >= control_heading_rotate_start_angle_){
+          rotate_for_heading_during_control_ = true;
+          RCLCPP_WARN(
+            this->get_logger(),
+            "Heading deviation %.2f exceeds start threshold %.2f, rotating in place before moving.",
+            heading_deviation,
+            control_heading_rotate_start_angle_);
+        }
       }
 
       const std::string active_generator =
         rotate_for_heading_during_control_ ?
         "differential_drive_rotate_shortest_angle" :
         STATE_->main_trajectory_generator_;
-      dddmr_sys_core::PlannerState PS = LP_->computeVelocityCommand(active_generator, best_traj);
+      dddmr_sys_core::PlannerState PS = compute_selected_command(active_generator, best_traj);
 
       if(PS == dddmr_sys_core::PlannerState::TRAJECTORY_FOUND){
         STATE_->last_valid_control_ = clock_->now();
@@ -682,7 +696,8 @@ bool P2PMoveBase::executeCycle(const std::shared_ptr<rclcpp_action::ServerGoalHa
         LP_->setPlan(plan);
       }
       base_trajectory::Trajectory best_traj;
-      dddmr_sys_core::PlannerState PS = LP_->computeVelocityCommand(STATE_->main_trajectory_generator_, best_traj);
+      dddmr_sys_core::PlannerState PS =
+        compute_selected_command(STATE_->main_trajectory_generator_, best_traj);
 
       if(PS == dddmr_sys_core::PlannerState::TRAJECTORY_FOUND){
         STATE_->last_valid_control_ = clock_->now();

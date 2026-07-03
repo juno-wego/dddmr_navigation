@@ -121,19 +121,20 @@ DIRECT_SENSOR_PROFILES = {
 LOCALIZATION_MCL_OVERRIDES = {
     # Run measurement updates for smaller motions so in-place rotation
     # gets corrected before drift accumulates.
-    "update_min_d": 0.05,
+    "update_min_d": 0.03,
     # Trigger measurement updates earlier during in-place turns.
-    "update_min_a": 0.01,
+    "update_min_a": 0.008,
     # Reduce map->odom smoothing so map correction catches rotation drift faster.
-    "lpf_step": 0.2,
+    "lpf_step": 0.35,
     "jump_dist": 0.5,
-    "jump_ang": 0.10,
+    "jump_ang": 0.18,
     # Explore yaw space more aggressively when the estimate starts to drift.
-    "resample_var_yaw": 0.35,
+    "resample_var_yaw": 0.40,
     "expansion_var_x": 0.7,
     "expansion_var_y": 0.7,
-    "expansion_var_yaw": 0.8,
+    "expansion_var_yaw": 0.9,
     # Trust rotational odometry less so the filter can snap back to the map.
+    "odom_err_lin_ang": 0.5,
     "odom_err_ang_lin": 0.9,
     "odom_err_ang_ang": 1.8,
     # Relax the bias against larger corrections from the map.
@@ -224,6 +225,57 @@ def _configure_localization_tuning(config):
     likelihood.update(LOCALIZATION_LIKELIHOOD_OVERRIDES)
 
 
+def _configure_no_entry_zones(config, context):
+    perception_3d_share = get_package_share_path("perception_3d")
+    no_entry_pcd_arg = LaunchConfiguration("no_entry_pcd").perform(context).strip()
+    no_entry_pcd = (
+        Path(no_entry_pcd_arg).expanduser()
+        if no_entry_pcd_arg
+        else perception_3d_share / "map" / "no_entry1.pcd"
+    )
+
+    if not no_entry_pcd.exists():
+        raise RuntimeError(
+            f"Default no-entry PCD does not exist: {no_entry_pcd}"
+        )
+
+    no_entry_zone_config = {
+        "no_entry_layer": {
+            "ros__parameters": {
+                "zone1": {
+                    "pcd": str(no_entry_pcd),
+                    "is_enabled": True,
+                }
+            }
+        }
+    }
+    temp_no_entry_config = tempfile.NamedTemporaryFile(
+        mode="w",
+        prefix="go2_no_entry_",
+        suffix=".yaml",
+        delete=False,
+        encoding="utf-8",
+    )
+    with temp_no_entry_config as fh:
+        yaml.safe_dump(no_entry_zone_config, fh, sort_keys=False)
+    temp_no_entry_config_path = temp_no_entry_config.name
+
+    for section in ("perception_3d_local", "perception_3d_global"):
+        params = config.setdefault(section, {}).setdefault("ros__parameters", {})
+        plugins = params.setdefault("plugins", [])
+        if "no_entry_layer" not in plugins:
+            plugins.insert(1 if plugins else 0, "no_entry_layer")
+        no_entry_layer = params.setdefault("no_entry_layer", {})
+        no_entry_layer["plugin"] = "perception_3d::NoEntryLayer"
+        no_entry_layer["no_entry_zone_pcd_file_dir"] = temp_no_entry_config_path
+        no_entry_layer.setdefault(
+            "inflation_distance",
+            1.0 if section == "perception_3d_global" else 0.9,
+        )
+
+    return temp_no_entry_config_path
+
+
 def _build_navigation_nodes(context, *args, **kwargs):
     """OpaqueFunction: resolve map_dir at launch time and inject into config."""
 
@@ -249,6 +301,7 @@ def _build_navigation_nodes(context, *args, **kwargs):
         )
     odom_topic = _configure_odom_profile(config, odom_source)
     _configure_localization_tuning(config)
+    no_entry_zone_config_path = _configure_no_entry_zones(config, context)
 
     if lidar_source == "merged":
         effective_lidar_topic = lidar_topic
@@ -381,6 +434,7 @@ def _build_navigation_nodes(context, *args, **kwargs):
         LogInfo(msg=["Using Go2 map_dir: ", str(map_dir)]),
         LogInfo(msg=["Using odom_source: ", odom_source, " -> ", odom_topic]),
         LogInfo(msg=["Using lidar_source: ", lidar_source, " -> ", effective_lidar_topic]),
+        LogInfo(msg=["Using no_entry zones: ", no_entry_zone_config_path]),
         *sensor_pipeline_nodes,
         mcl_feature,
         mcl_3dl,
@@ -498,6 +552,14 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "lidar_topic", default_value="/go2/lidar_points_base"
+            ),
+            DeclareLaunchArgument(
+                "no_entry_pcd",
+                default_value="",
+                description=(
+                    "Absolute path to a keepout/no-entry zone PCD. "
+                    "If empty, use perception_3d's bundled sample no_entry1.pcd."
+                ),
             ),
             # ── Bringup + Navigation nodes ───────────────────────────
             sensors_bringup,
