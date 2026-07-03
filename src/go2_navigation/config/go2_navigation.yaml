@@ -151,6 +151,9 @@ p2p_move_base:
     no_plan_retry_num: 10                  # plan이 없을 때 재계획을 시도하는 횟수
     waiting_patience: 10.0                 # 일시 대기 상태를 허용하는 최대 시간 [s]
     use_recovery_behaviors: false          # false: recovery behavior를 자동 실행하지 않음
+    main_trajectory_generator: "differential_drive_simple" # 측이동 없이 linear.x/angular.z만으로 추종
+    control_heading_rotate_start_angle: 1.6 # 주행 중 거의 반대 방향일 때만 제자리 회전으로 전환 [rad]
+    control_heading_rotate_stop_angle: 0.8  # 어느 정도 맞춰지면 빨리 곡선 전진 추종으로 복귀 [rad]
 
 global_plan_manager:
   ros__parameters:
@@ -163,8 +166,8 @@ local_planner:
     odom_topic: odom                       # local planner가 구독할 odometry topic 이름
     forward_prune: 3.0                     # 현재 로봇 앞쪽으로 남길 전역 경로 길이 [m]
     backward_prune: 1.0                    # 현재 로봇 뒤쪽으로 남길 전역 경로 길이 [m]
-    heading_tracking_distance: 0.5         # 너무 멀리 보지 않고 가까운 경로를 따라가게 함
-    heading_align_angle: 1.2               # 시작 yaw가 많이 틀어져도 곡선 추종으로 들어가도록 완화
+    heading_tracking_distance: 0.8         # 약간 더 앞을 보고 진행 방향을 잡아 부드럽게 추종
+    heading_align_angle: 0.5               # 시작 시에는 방향을 맞추되 주행 중에는 과하게 엄격하지 않게 유지
     prune_plane_timeout: 3.0               # 오래된 prune plan에 끌려가지 않도록 유지 시간 단축
     xy_goal_tolerance: 0.35                # goal 판정을 더 타이트하게 해서 중간에 느슨하게 끝나지 않게 함 [m]
     yaw_goal_tolerance: 0.52               # goal yaw 허용 오차 약 30 deg
@@ -202,7 +205,7 @@ trajectory_generators:
     differential_drive_rotate_shortest_angle:
       plugin: "trajectory_generators::DDRotateInplaceTheory" # 최단 yaw 방향으로 제자리 회전하는 generator 구현체
       controller_frequency: 15.0             # generator 계산/출력 갱신 주기 [Hz]
-      rotation_speed: 0.5                    # 제자리 회전 각속도 [rad/s]
+      rotation_speed: 0.6                    # 코너 진입 전 헤딩 정렬을 조금 더 빠르게 수행
       # 충돌 판정용 로봇 외형 직육면체. 각 점은 base_link 기준 [x, y, z]입니다.
       cuboid:
         flb: [0.42, 0.36, 0.0]               # 전방 좌측 하단 꼭짓점 [m]
@@ -217,7 +220,7 @@ trajectory_generators:
     differential_drive_rotate_inplace:
       plugin: "trajectory_generators::DDRotateInplaceTheory" # 일반 제자리 회전 generator 구현체
       controller_frequency: 15.0             # generator 계산/출력 갱신 주기 [Hz]
-      rotation_speed: 0.5                    # 제자리 회전 각속도 [rad/s]
+      rotation_speed: 0.6                    # 코너 진입 전 헤딩 정렬을 조금 더 빠르게 수행
       # 충돌 판정용 로봇 외형 직육면체. 각 점은 base_link 기준 [x, y, z]입니다.
       cuboid:
         flb: [0.42, 0.36, 0.0]               # 전방 좌측 하단 꼭짓점 [m]
@@ -232,20 +235,20 @@ trajectory_generators:
     differential_drive_simple:
       plugin: "trajectory_generators::DDSimpleTrajectoryGeneratorTheory" # 전진과 곡선 주행 후보를 생성하는 generator 구현체
       max_vel_x: 0.32                       # 직선 속도를 낮춰 overshoot와 경로 이탈 감소 [m/s]
-      min_vel_x: 0.08                       # 발만 구르는 저속 영역을 피하고 실제 전진이 시작되도록 최소 전진 속도 확보 [m/s]
-      max_vel_theta: 0.50                   # 코너에서 더 잘 따라가도록 회전 여유 확보 [rad/s]
-      min_vel_theta: 0.08                   # 너무 작은 회전 명령 대신 의미 있는 곡선/방향 보정이 나오도록 유지 [rad/s]
+      min_vel_x: 0.03                       # 아주 저속 곡선 추종도 허용해 stop-turn-go를 줄임 [m/s]
+      max_vel_theta: 0.75                   # 곡선 주행 중 회전 여유를 더 확보 [rad/s]
+      min_vel_theta: 0.03                   # 작은 방향 보정도 부드럽게 허용 [rad/s]
       acc_lim_x: 0.6                        # 급가속 완화 [m/s²]
-      acc_lim_theta: 0.7                    # 급회전 완화 [rad/s²]
-      deceleration_ratio: 2.0               # 감속 한계를 가속 한계 대비 크게 적용하는 비율
+      acc_lim_theta: 1.2                    # 곡선 추종 시 회전 응답성을 더 확보 [rad/s²]
+      deceleration_ratio: 4.0               # 급코너/헤딩 보정 시 전진 속도를 더 쉽게 낮출 수 있도록 완화
       max_motor_shaft_rpm: 3000.0           # 구동 모터 shaft 최대 회전수 [RPM]
       wheel_diameter: 0.16                  # differential-drive 환산에 사용하는 가상 wheel 직경 [m]
       gear_ratio: 1.0                       # 모터 축과 가상 wheel 사이의 기어비
       robot_radius: 0.25                    # 간략 충돌/회전 계산에 사용하는 로봇 반경 [m]
       controller_frequency: 15.0            # 후보 trajectory 계산 주기 [Hz]
-      sim_time: 0.8                         # 너무 먼 미래보다 짧은 예측으로 경로 급변 감소 [s]
-      linear_x_sample: 6.0                  # 전진 속도 축에서 생성할 후보 수
-      angular_z_sample: 12.0                # 회전 후보를 늘려 좁은 코너 추종 개선
+      sim_time: 1.0                         # 약간 더 긴 horizon으로 자연스러운 arc trajectory 선택
+      linear_x_sample: 7.0                  # 전진 속도 후보를 조금 더 촘촘히 생성
+      angular_z_sample: 18.0                # 회전 후보를 더 촘촘히 생성해 덜 끊기는 곡선 궤적 선택
       sim_granularity: 0.05                 # 전진 시뮬레이션의 공간/시간 분해능 기준
       angular_sim_granularity: 0.025        # 회전 시뮬레이션의 각도 분해능 기준 [rad]
       cuboid:
@@ -271,22 +274,22 @@ mpc_critics:
       - "prefer_rotate_shortest"           # 최단 방향 회전을 우선하는 critic
     collision:
       plugin: "mpc_critics::CollisionModel" # trajectory와 obstacle/costmap의 충돌 비용 모델
-      trajectory_generator: differential_drive_simple # 이 critic이 평가할 trajectory generator 이름
+      trajectory_generator: differential_drive_simple # 측이동 없는 주행 trajectory를 평가
       weight: 1.0                            # collision cost 가중치
     stick_path:
       plugin: "mpc_critics::StickPathModel" # 전역 경로에서 벗어나는 정도를 비용으로 계산
-      trajectory_generator: differential_drive_simple # 이 critic이 평가할 trajectory generator 이름
-      weight: 0.4                            # 경로를 더 강하게 고수
+      trajectory_generator: differential_drive_simple # 측이동 없는 주행 trajectory를 평가
+      weight: 0.08                           # 경로선에 바짝 붙기보다 부드러운 추종을 우선
     pure_pursuit:
       plugin: "mpc_critics::PurePursuitModel" # look-ahead point를 향한 추종 비용 모델
-      trajectory_generator: differential_drive_simple # 이 critic이 평가할 trajectory generator 이름
-      lookahead_distance: 0.8                 # prune plan에서 traj가 향해야 할 기준 look-ahead 거리 [m]
-      translation_weight: 1.0                # look-ahead 위치 오차 비용 가중치
-      orientation_weight: 0.01               # pure pursuit가 자세보다 위치 추종 위주로 움직이도록 완화
+      trajectory_generator: differential_drive_simple # 측이동 없는 주행 trajectory를 평가
+      lookahead_distance: 1.2                 # 좀 더 앞을 보고 부드러운 arc로 추종
+      translation_weight: 0.8                # look-ahead 위치 오차 비용 가중치
+      orientation_weight: 0.0                # 로컬 yaw 정합을 과하게 강제하지 않음
     toward_global_plan:
       plugin: "mpc_critics::TowardGlobalPlanModel" # trajectory 진행 방향과 global plan 방향의 일치 비용 모델
-      trajectory_generator: differential_drive_simple # 이 critic이 평가할 trajectory generator 이름
-      weight: 0.35                           # 전역 경로 방향 일치보다 실제 전진 추종을 우선하도록 완화
+      trajectory_generator: differential_drive_simple # 측이동 없는 주행 trajectory를 평가
+      weight: 0.08                           # 방향 유도는 하되 stop-turn을 유발할 정도로 강제하지 않음
     collision_rotate:
       plugin: "mpc_critics::CollisionModel" # 제자리 회전 중 충돌 비용 모델
       trajectory_generator: differential_drive_rotate_inplace # 이 critic이 평가할 trajectory generator 이름
@@ -319,7 +322,9 @@ perception_3d_local:
       ground_topic: "mapground"            # 정적 지도에서 ground point cloud topic
     path_blocked_strategy:
       plugin: "perception_3d::PathBlockedStrategy" # 현재 경로가 obstacle로 막혔는지 판단하는 전략
-      check_radius: 0.3                     # 경로 막힘 검사 반경 [m]
+      check_radius: 0.18                    # 코너 안쪽 스침에 덜 민감하게 반응 [m]
+      blocked_ratio_threshold: 20.0         # 경로 일부가 아닌 꽤 막혔을 때만 blocked 판정 [%]
+      min_blocked_points: 5                 # blocked 판정 전 최소 충돌 점 수
     lidar:
       plugin: "perception_3d::MultiLayerSpinningLidar" # 분할된 LiDAR cloud를 obstacle layer로 변환하는 구현체
       is_local_planner: true                # true: local planner용 즉시성 obstacle layer로 동작
@@ -360,6 +365,7 @@ perception_3d_global:
       intensity_search_radius: 1.0          # 좁은 통로를 잘못 가로지르는 연결 방지 [m]
       intensity_search_punish_weight: 0.1   # intensity 불일치/불확실성에 부과할 비용 가중치
       static_imposing_radius: 2.0           # 정적 지도 제약을 더 안정적으로 반영 [m]
+      graph_connection_z_tolerance: 0.3     # 현재 점 기준 ±30 cm z 범위 이웃을 우선 연결
       map_topic: "mapcloud"                 # 정적 전체 지도 point cloud topic
       ground_topic: "mapground"            # 정적 지도에서 ground point cloud topic
       support:

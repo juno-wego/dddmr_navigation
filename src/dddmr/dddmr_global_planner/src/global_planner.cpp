@@ -74,21 +74,27 @@ bool selectNearestGraphPoint(
   unsigned int& selected_id)
 {
   bool found = false;
-  double best_distance_sq = std::numeric_limits<double>::max();
+  double best_xy_distance_sq = std::numeric_limits<double>::max();
+  double best_z_distance = std::numeric_limits<double>::max();
 
   for(const int index : candidate_indices){
     const auto& point = cloud.points[index];
     const double dx = point.x - query.x;
     const double dy = point.y - query.y;
     const double dz = point.z - query.z;
+    const double xy_distance_sq = dx * dx + dy * dy;
+    const double xy_distance = std::sqrt(xy_distance_sq);
+    const double z_distance = std::fabs(dz);
 
-    if(std::fabs(dx) > xy_tolerance || std::fabs(dy) > xy_tolerance || std::fabs(dz) > z_tolerance){
+    if(xy_distance > xy_tolerance || z_distance > z_tolerance){
       continue;
     }
 
-    const double distance_sq = dx * dx + dy * dy + dz * dz;
-    if(distance_sq < best_distance_sq){
-      best_distance_sq = distance_sq;
+    if(
+      xy_distance_sq < best_xy_distance_sq ||
+      (xy_distance_sq == best_xy_distance_sq && z_distance < best_z_distance)){
+      best_xy_distance_sq = xy_distance_sq;
+      best_z_distance = z_distance;
       selected_id = static_cast<unsigned int>(index);
       found = true;
     }

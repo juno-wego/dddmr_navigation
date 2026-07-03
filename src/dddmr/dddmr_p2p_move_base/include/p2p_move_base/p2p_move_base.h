@@ -112,6 +112,9 @@ class P2PMoveBase : public rclcpp::Node {
     bool is_recoverying_;
     bool is_recoverying_succeed_;
     void startRecoveryBehaviors(std::string behavior_name);
+    bool rotate_for_heading_during_control_{false};
+    double control_heading_rotate_start_angle_{1.0};
+    double control_heading_rotate_stop_angle_{0.45};
 
 
 };

@@ -233,10 +233,21 @@ double Local_Planner::getShortestAngleFromPose2RobotHeading(tf2::Transform m_pos
 
 bool Local_Planner::isInitialHeadingAligned(){
 
+  const double yaw = getPathHeadingDeviation();
+  RCLCPP_DEBUG(this->get_logger().get_child(name_), "Heading difference from the prune plan starting at %.2f is %.2f", heading_tracking_distance_, yaw);
+
+  if(fabs(yaw) < heading_align_angle_)
+    return true;
+  else
+    return false;
+}
+
+double Local_Planner::getPathHeadingDeviation(){
+
   prunePlan(heading_tracking_distance_, 0.0);
   if(prune_plan_.poses.size()<3){
     RCLCPP_WARN_THROTTLE(this->get_logger().get_child(name_), *clock_, 5000, "Prune plan is too short when checking initial heading.");
-    return false;
+    return 0.0;
   }
   
   //@ Get first/last pose from prune plan
@@ -261,13 +272,7 @@ bool Local_Planner::isInitialHeadingAligned(){
   //@Update the value to critics that allow the robot to turn by shortest angle
   double yaw = getShortestAngleFromPose2RobotHeading(tf2_prune_pointing_pose);
   mpc_critics_ros_->getSharedDataPtr()->heading_deviation_ = yaw;
-  
-  RCLCPP_DEBUG(this->get_logger().get_child(name_), "Heading difference from the prune plan starting at %.2f is %.2f", heading_tracking_distance_, yaw);
-
-  if(fabs(yaw) < heading_align_angle_)
-    return true;
-  else
-    return false;
+  return yaw;
 }
 
 bool Local_Planner::isGoalHeadingAligned(){
@@ -636,14 +641,33 @@ dddmr_sys_core::PlannerState Local_Planner::computeVelocityCommand(std::string t
     RCLCPP_WARN(this->get_logger().get_child(name_), "Local planner control time exceed expect time: %.2f but is %.2f", 1./controller_frequency_, t_diff.seconds());
   }
   
+  const bool is_rotate_generator = traj_gen_name.find("rotate") != std::string::npos;
   //@Loop opinions
   std::vector<perception_3d::PerceptionOpinion> opinions = perception_3d_ros_->getStackedPerception()->getOpinions();
   for(auto opinion_it=opinions.begin(); opinion_it!=opinions.end();opinion_it++){
     if((*opinion_it)==perception_3d::PATH_BLOCKED_WAIT){
+      if(is_rotate_generator){
+        RCLCPP_WARN_THROTTLE(
+          this->get_logger().get_child(name_),
+          *clock_,
+          5000,
+          "Ignoring PATH_BLOCKED_WAIT while evaluating rotate trajectory %s.",
+          traj_gen_name.c_str());
+        continue;
+      }
       RCLCPP_WARN_THROTTLE(this->get_logger().get_child(name_), *clock_, 5000, "Found the prune plan is blocked, go to wait state.");
       return dddmr_sys_core::PATH_BLOCKED_WAIT;
     }
     else if((*opinion_it)==perception_3d::PATH_BLOCKED_REPLANNING){
+      if(is_rotate_generator){
+        RCLCPP_WARN_THROTTLE(
+          this->get_logger().get_child(name_),
+          *clock_,
+          5000,
+          "Ignoring PATH_BLOCKED_REPLANNING while evaluating rotate trajectory %s.",
+          traj_gen_name.c_str());
+        continue;
+      }
       RCLCPP_WARN_THROTTLE(this->get_logger().get_child(name_), *clock_, 5000, "Found the prune plan is blocked, go to replanning.");
       return dddmr_sys_core::PATH_BLOCKED_REPLANNING;      
     }

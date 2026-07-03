@@ -46,6 +46,12 @@ void PathBlockedStrategy::onInitialize()
   node_->declare_parameter(name_ + ".check_radius", rclcpp::ParameterValue(0.0));
   node_->get_parameter(name_ + ".check_radius", check_radius_);
   RCLCPP_INFO(node_->get_logger().get_child(name_), "check_radius: %.2f", check_radius_);//5.0
+  node_->declare_parameter(name_ + ".blocked_ratio_threshold", rclcpp::ParameterValue(10.0));
+  node_->get_parameter(name_ + ".blocked_ratio_threshold", blocked_ratio_threshold_);
+  RCLCPP_INFO(node_->get_logger().get_child(name_), "blocked_ratio_threshold: %.2f", blocked_ratio_threshold_);
+  node_->declare_parameter(name_ + ".min_blocked_points", rclcpp::ParameterValue(3));
+  node_->get_parameter(name_ + ".min_blocked_points", min_blocked_points_);
+  RCLCPP_INFO(node_->get_logger().get_child(name_), "min_blocked_points: %d", min_blocked_points_);
   prune_plan_blocked_ratio_ = 0.0;
 
 }
@@ -93,7 +99,12 @@ void PathBlockedStrategy::selfMark(){
     prune_plan_blocked_ratio_ = (prune_plan_blocked_size) / (prune_plan_orignal_size)*100.0;
   }
 
-  if(prune_plan_blocked_ratio_>0.0)
+  const int blocked_point_count =
+    static_cast<int>(std::round(
+      prune_plan_blocked_ratio_ * shared_data_->pcl_prune_plan_.points.size() / 100.0));
+  if(
+    prune_plan_blocked_ratio_ >= blocked_ratio_threshold_ &&
+    blocked_point_count >= min_blocked_points_)
     opinion_ = perception_3d::PATH_BLOCKED_WAIT;
   
   //RCLCPP_WARN(node_->get_logger().get_child(name_), "%s: blocked_ratio:%.2f", name_.c_str(), prune_plan_blocked_ratio_ );

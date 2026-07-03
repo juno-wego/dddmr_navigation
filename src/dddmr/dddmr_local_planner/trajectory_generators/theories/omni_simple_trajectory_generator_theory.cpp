@@ -281,31 +281,68 @@ void OmniSimpleTrajectoryGeneratorTheory::initialise(){
 
     // with dwa do not accelerate beyond the first step, we only sample within velocities we reach in sim_period
     double sim_period = 1.0/params_->controller_frequency;
-    
 
-    max_vel[0] = std::min(max_vel_x, shared_data_->robot_state_.twist.twist.linear.x + acc_lim[0] * sim_period);
-    max_vel[1] = std::min(max_vel_y, shared_data_->robot_state_.twist.twist.linear.y + acc_lim[1] * sim_period);
-    max_vel[2] = std::min(max_vel_th, shared_data_->robot_state_.twist.twist.angular.z + acc_lim[2] * sim_period);
+    if(shared_data_->current_allowed_max_linear_speed_>0.0){
+      max_vel_x = std::min(max_vel_x, shared_data_->current_allowed_max_linear_speed_);
+      max_vel_y = std::min(max_vel_y, shared_data_->current_allowed_max_linear_speed_);
+    }
 
-    min_vel[0] = std::max(min_vel_x, shared_data_->robot_state_.twist.twist.linear.x - acc_lim[0] * sim_period);
-    min_vel[1] = std::max(min_vel_y, shared_data_->robot_state_.twist.twist.linear.y - acc_lim[1] * sim_period);
-    min_vel[2] = std::max(min_vel_th, shared_data_->robot_state_.twist.twist.angular.z - acc_lim[2] * sim_period);
-    
-    
-    if(shared_data_->robot_state_.twist.twist.linear.x >= max_vel_x/limits_->deceleration_ratio){
+    const double odom_linear_x = shared_data_->robot_state_.twist.twist.linear.x;
+    const double odom_linear_y = shared_data_->robot_state_.twist.twist.linear.y;
+    const double odom_angular_z = shared_data_->robot_state_.twist.twist.angular.z;
+    const double ref_linear_x = shared_data_->ref_twist_for_trajectory_generation_.twist.linear.x;
+    const double ref_linear_y = shared_data_->ref_twist_for_trajectory_generation_.twist.linear.y;
+    const double ref_angular_z = shared_data_->ref_twist_for_trajectory_generation_.twist.angular.z;
+
+    const double current_linear_x =
+      std::fabs(odom_linear_x) > 1e-3 ? odom_linear_x : ref_linear_x;
+    const double current_linear_y =
+      std::fabs(odom_linear_y) > 1e-3 ? odom_linear_y : ref_linear_y;
+    const double current_angular_z =
+      std::fabs(odom_angular_z) > 1e-3 ? odom_angular_z : ref_angular_z;
+
+    max_vel[0] = std::min(max_vel_x, current_linear_x + acc_lim[0] * sim_period);
+    max_vel[1] = std::min(max_vel_y, current_linear_y + acc_lim[1] * sim_period);
+    max_vel[2] = std::min(max_vel_th, current_angular_z + acc_lim[2] * sim_period);
+
+    min_vel[0] = std::max(min_vel_x, current_linear_x - acc_lim[0] * sim_period);
+    min_vel[1] = std::max(min_vel_y, current_linear_y - acc_lim[1] * sim_period);
+    min_vel[2] = std::max(min_vel_th, current_angular_z - acc_lim[2] * sim_period);
+
+    if(current_linear_x >= max_vel_x/limits_->deceleration_ratio){
       //@ robot reach max speed at forward/backward
-      min_vel[0] = std::max(min_vel_x, shared_data_->robot_state_.twist.twist.linear.x/limits_->deceleration_ratio);
+      min_vel[0] = std::max(min_vel_x, current_linear_x/limits_->deceleration_ratio);
     }
-    else if(shared_data_->robot_state_.twist.twist.linear.x <= min_vel_x/limits_->deceleration_ratio){
-      max_vel[0] = std::min(max_vel_x, shared_data_->robot_state_.twist.twist.linear.x/limits_->deceleration_ratio);
+    else if(current_linear_x <= min_vel_x/limits_->deceleration_ratio){
+      max_vel[0] = std::min(max_vel_x, current_linear_x/limits_->deceleration_ratio);
     }
 
-    if(shared_data_->robot_state_.twist.twist.linear.y >= max_vel_y/limits_->deceleration_ratio){
+    if(current_linear_y >= max_vel_y/limits_->deceleration_ratio){
       //@ robot reach max speed at forward/backward
-      min_vel[1] = std::max(min_vel_y, shared_data_->robot_state_.twist.twist.linear.y/limits_->deceleration_ratio);
+      min_vel[1] = std::max(min_vel_y, current_linear_y/limits_->deceleration_ratio);
     }
-    else if(shared_data_->robot_state_.twist.twist.linear.y <= min_vel_y/limits_->deceleration_ratio){
-      max_vel[1] = std::min(max_vel_y, shared_data_->robot_state_.twist.twist.linear.y/limits_->deceleration_ratio);
+    else if(current_linear_y <= min_vel_y/limits_->deceleration_ratio){
+      max_vel[1] = std::min(max_vel_y, current_linear_y/limits_->deceleration_ratio);
+    }
+
+    // When odom remains near zero at startup, expand the initial sample set so the
+    // gait can take a meaningful first step instead of dithering at accel*dt.
+    if(std::hypot(current_linear_x, current_linear_y) < 1e-3){
+      const float bootstrap_xy_speed =
+        static_cast<float>(std::min(limits_->max_vel_trans,
+          std::max(limits_->min_vel_trans, 0.12)));
+      max_vel[0] = std::max(max_vel[0], bootstrap_xy_speed);
+      min_vel[0] = std::min(min_vel[0], static_cast<float>(limits_->min_vel_x));
+      max_vel[1] = std::max(max_vel[1], bootstrap_xy_speed);
+      min_vel[1] = std::min(min_vel[1], -bootstrap_xy_speed);
+    }
+
+    if(std::fabs(current_angular_z) < 1e-3){
+      const float bootstrap_angular_speed =
+        static_cast<float>(std::min(max_vel_th,
+          std::max(limits_->min_vel_theta, 0.12)));
+      max_vel[2] = std::max(max_vel[2], bootstrap_angular_speed);
+      min_vel[2] = std::min(min_vel[2], -bootstrap_angular_speed);
     }
 
     Eigen::Vector3f vel_samp = Eigen::Vector3f::Zero();

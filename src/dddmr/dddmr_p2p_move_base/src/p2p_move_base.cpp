@@ -85,6 +85,14 @@ void P2PMoveBase::initial(const std::shared_ptr<local_planner::Local_Planner>& l
   else{
     cmd_vel_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 1);
   }
+
+  this->declare_parameter("control_heading_rotate_start_angle", rclcpp::ParameterValue(1.0));
+  this->get_parameter("control_heading_rotate_start_angle", control_heading_rotate_start_angle_);
+  RCLCPP_INFO(this->get_logger(), "control_heading_rotate_start_angle: %.2f", control_heading_rotate_start_angle_);
+
+  this->declare_parameter("control_heading_rotate_stop_angle", rclcpp::ParameterValue(0.45));
+  this->get_parameter("control_heading_rotate_stop_angle", control_heading_rotate_stop_angle_);
+  RCLCPP_INFO(this->get_logger(), "control_heading_rotate_stop_angle: %.2f", control_heading_rotate_stop_angle_);
   
 
   tf_listener_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
@@ -208,6 +216,7 @@ void P2PMoveBase::executeCb(const std::shared_ptr<rclcpp_action::ServerGoalHandl
   //@ if we dont initialize oscillation pose here, the first controlling entry will cause recovery behavior.
   //@ the rclcpp::Time initial are all done in FSM class
   STATE_->initialParams(LP_->getGlobalPose(), clock_->now());
+  rotate_for_heading_during_control_ = false;
   STATE_->current_goal_ = move_base_goal->target_pose;
   GPM_->setGoal(STATE_->current_goal_);
   GPM_->resume();
@@ -505,7 +514,31 @@ bool P2PMoveBase::executeCycle(const std::shared_ptr<rclcpp_action::ServerGoalHa
       }
 
       base_trajectory::Trajectory best_traj;
-      dddmr_sys_core::PlannerState PS = LP_->computeVelocityCommand(STATE_->main_trajectory_generator_, best_traj);
+      const double heading_deviation = std::fabs(LP_->getPathHeadingDeviation());
+      if(rotate_for_heading_during_control_){
+        if(heading_deviation <= control_heading_rotate_stop_angle_){
+          rotate_for_heading_during_control_ = false;
+          RCLCPP_INFO(
+            this->get_logger(),
+            "Heading deviation %.2f is below stop threshold %.2f, resuming curved forward tracking.",
+            heading_deviation,
+            control_heading_rotate_stop_angle_);
+        }
+      }
+      else if(heading_deviation >= control_heading_rotate_start_angle_){
+        rotate_for_heading_during_control_ = true;
+        RCLCPP_WARN(
+          this->get_logger(),
+          "Heading deviation %.2f exceeds start threshold %.2f, rotating in place before moving.",
+          heading_deviation,
+          control_heading_rotate_start_angle_);
+      }
+
+      const std::string active_generator =
+        rotate_for_heading_during_control_ ?
+        "differential_drive_rotate_shortest_angle" :
+        STATE_->main_trajectory_generator_;
+      dddmr_sys_core::PlannerState PS = LP_->computeVelocityCommand(active_generator, best_traj);
 
       if(PS == dddmr_sys_core::PlannerState::TRAJECTORY_FOUND){
         STATE_->last_valid_control_ = clock_->now();

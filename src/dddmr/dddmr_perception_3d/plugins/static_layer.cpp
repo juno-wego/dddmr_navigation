@@ -30,6 +30,71 @@
 */
 #include <perception_3d/static_layer.h>
 
+#include <algorithm>
+
+namespace
+{
+
+std::vector<int> selectPreferredGraphNeighbors(
+  const pcl::PointCloud<pcl::PointXYZI>& cloud,
+  const pcl::PointXYZI& node,
+  const std::vector<int>& candidate_indices,
+  double z_tolerance,
+  std::size_t max_candidates)
+{
+  struct Candidate
+  {
+    int index;
+    double xy_distance_sq;
+    double z_distance;
+  };
+
+  std::vector<Candidate> preferred_candidates;
+  preferred_candidates.reserve(candidate_indices.size());
+  std::vector<Candidate> fallback_candidates;
+  fallback_candidates.reserve(candidate_indices.size());
+
+  for(const int index : candidate_indices){
+    const auto& point = cloud.points[index];
+    const double dx = point.x - node.x;
+    const double dy = point.y - node.y;
+    const double dz = point.z - node.z;
+    const Candidate candidate{
+      index,
+      dx * dx + dy * dy,
+      std::fabs(dz),
+    };
+    fallback_candidates.push_back(candidate);
+    if(candidate.z_distance <= z_tolerance){
+      preferred_candidates.push_back(candidate);
+    }
+  }
+
+  auto sort_by_xy_then_z = [](const Candidate& lhs, const Candidate& rhs) {
+    if(lhs.xy_distance_sq == rhs.xy_distance_sq){
+      return lhs.z_distance < rhs.z_distance;
+    }
+    return lhs.xy_distance_sq < rhs.xy_distance_sq;
+  };
+
+  auto& selected_candidates =
+    preferred_candidates.empty() ? fallback_candidates : preferred_candidates;
+  std::sort(selected_candidates.begin(), selected_candidates.end(), sort_by_xy_then_z);
+
+  if(max_candidates > 0 && selected_candidates.size() > max_candidates){
+    selected_candidates.resize(max_candidates);
+  }
+
+  std::vector<int> selected_indices;
+  selected_indices.reserve(selected_candidates.size());
+  for(const auto& candidate : selected_candidates){
+    selected_indices.push_back(candidate.index);
+  }
+  return selected_indices;
+}
+
+}  // namespace
+
 PLUGINLIB_EXPORT_CLASS(perception_3d::StaticLayer, perception_3d::Sensor)
 
 namespace perception_3d
@@ -79,6 +144,10 @@ void StaticLayer::onInitialize()
   node_->declare_parameter(name_ + ".static_imposing_radius", rclcpp::ParameterValue(0.25));
   node_->get_parameter(name_ + ".static_imposing_radius", static_imposing_radius_);
   RCLCPP_INFO(node_->get_logger().get_child(name_), "static_imposing_radius: %.2f", static_imposing_radius_);    
+
+  node_->declare_parameter(name_ + ".graph_connection_z_tolerance", rclcpp::ParameterValue(0.3));
+  node_->get_parameter(name_ + ".graph_connection_z_tolerance", graph_connection_z_tolerance_);
+  RCLCPP_INFO(node_->get_logger().get_child(name_), "graph_connection_z_tolerance: %.2f", graph_connection_z_tolerance_);
 
   node_->declare_parameter(name_ + ".is_local_planner", rclcpp::ParameterValue(false));
   node_->get_parameter(name_ + ".is_local_planner", is_local_planner_);
@@ -268,7 +337,14 @@ void StaticLayer::generateStaticGraph(){
       }
     }
     
-    for(auto it = pointIdxRadiusSearch.begin(); it!=pointIdxRadiusSearch.end();it++){
+    const auto selected_neighbor_indices = selectPreferredGraphNeighbors(
+      *pcl_ground_,
+      pcl_node,
+      pointIdxRadiusSearch,
+      graph_connection_z_tolerance_,
+      use_adaptive_connection_ ? static_cast<std::size_t>(adaptive_connection_number_) : pointIdxRadiusSearch.size());
+
+    for(auto it = selected_neighbor_indices.begin(); it!=selected_neighbor_indices.end();it++){
       //chekc relative z value for the edge, because we need to eliminate stair and wheel chair passage issue
       edge_t a_edge;
       auto node = index_cnt;
@@ -323,7 +399,14 @@ void StaticLayer::radiusSearchConnection(){
     }
     
     pcl::PointCloud<pcl::PointXYZI>::Ptr nn_pc (new pcl::PointCloud<pcl::PointXYZI>);
-    for(auto it = pointIdxRadiusSearch.begin(); it!=pointIdxRadiusSearch.end();it++){
+    const auto selected_neighbor_indices = selectPreferredGraphNeighbors(
+      *pcl_ground_,
+      pcl_node,
+      pointIdxRadiusSearch,
+      graph_connection_z_tolerance_,
+      use_adaptive_connection_ ? static_cast<std::size_t>(adaptive_connection_number_) : pointIdxRadiusSearch.size());
+
+    for(auto it = selected_neighbor_indices.begin(); it!=selected_neighbor_indices.end();it++){
       
       //chekc relative z value for the edge, because we need to eliminate stair and wheel chair passage issue
       /*

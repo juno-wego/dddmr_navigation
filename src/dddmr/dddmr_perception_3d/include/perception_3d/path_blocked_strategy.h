@@ -78,6 +78,8 @@ class PathBlockedStrategy: public Sensor{
   private:
     double prune_plan_blocked_ratio_;
     double check_radius_;
+    double blocked_ratio_threshold_;
+    int min_blocked_points_;
 };
 
 }//end of name space
