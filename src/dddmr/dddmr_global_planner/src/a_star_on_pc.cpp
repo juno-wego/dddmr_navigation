@@ -30,6 +30,28 @@
 */
 #include <global_planner/a_star_on_pc.h>
 
+namespace
+{
+
+double getPlanarDistance(const pcl::PointXYZI& a, const pcl::PointXYZI& b)
+{
+  return std::hypot(a.x - b.x, a.y - b.y);
+}
+
+bool isWithinExpandingBounds(
+  const pcl::PointXYZI& current,
+  const pcl::PointXYZI& candidate,
+  double expanding_x,
+  double expanding_y,
+  double expanding_z_tolerance)
+{
+  return std::fabs(candidate.x - current.x) <= expanding_x &&
+         std::fabs(candidate.y - current.y) <= expanding_y &&
+         std::fabs(candidate.z - current.z) <= expanding_z_tolerance;
+}
+
+}  // namespace
+
 AstarList::AstarList(pcl::PointCloud<pcl::PointXYZI>::Ptr& pc_original_z_up){
   pc_original_z_up_ = pc_original_z_up;
   kdtree_ground_.reset(new nanoflann::KdTreeFLANN<pcl::PointXYZI>());
@@ -103,11 +125,19 @@ bool AstarList::isFrontierEmpty(){
 
 A_Star_on_Graph::A_Star_on_Graph(pcl::PointCloud<pcl::PointXYZI>::Ptr pc_original_z_up, 
                                   std::shared_ptr<perception_3d::Perception3D_ROS> perception_ros,
-                                  double a_star_expanding_radius){
+                                  double a_star_expanding_x,
+                                  double a_star_expanding_y,
+                                  double a_star_expanding_z_tolerance){
   
   perception_ros_ = perception_ros;
   pc_original_z_up_ = pc_original_z_up;
-  a_star_expanding_radius_ = a_star_expanding_radius;
+  a_star_expanding_x_ = a_star_expanding_x;
+  a_star_expanding_y_ = a_star_expanding_y;
+  a_star_expanding_z_tolerance_ = a_star_expanding_z_tolerance;
+  a_star_search_radius_ = std::sqrt(
+    a_star_expanding_x_ * a_star_expanding_x_ +
+    a_star_expanding_y_ * a_star_expanding_y_ +
+    a_star_expanding_z_tolerance_ * a_star_expanding_z_tolerance_);
   ASLS_ = new AstarList(pc_original_z_up_);
 }
 
@@ -209,7 +239,7 @@ void A_Star_on_Graph::getPath(
 
   pcl::PointXYZI pcl_goal = pc_original_z_up_->points[goal];
   pcl::PointXYZI pcl_start = pc_original_z_up_->points[start];
-  float f = sqrt(pcl::geometry::squaredDistance(pcl_start, pcl_goal));
+  float f = getPlanarDistance(pcl_start, pcl_goal);
   Node_t current_node = {.self_index=start, .g=0, .h=0, .f=f, .parent_index=start, .is_closed=false, .is_opened=true};
 
   ASLS_->Initial();
@@ -237,28 +267,53 @@ void A_Star_on_Graph::getPath(
     pcl::PointXYZI pcl_now = pc_original_z_up_->points[current_node.self_index];
     std::vector<int> pointIdxRadiusSearch;
     std::vector<float> pointRadiusSquaredDistance;
-    ASLS_->kdtree_ground_->radiusSearch(pcl_now, a_star_expanding_radius_, pointIdxRadiusSearch, pointRadiusSquaredDistance);
+    ASLS_->kdtree_ground_->radiusSearch(pcl_now, a_star_search_radius_, pointIdxRadiusSearch, pointRadiusSquaredDistance);
 
     //@dealing with orphan node
     if(pointIdxRadiusSearch.size()<8){
       std::vector<int> pointIdxRadiusX2Search;
       std::vector<float> pointRadiusSquaredDistanceX2;
       //ASLS_->kdtree_ground_->nearestKSearch(pcl_now, 8, pointIdxRadiusX2Search, pointRadiusSquaredDistanceX2);
-      ASLS_->kdtree_ground_->radiusSearch(pcl_now, 2*a_star_expanding_radius_, pointIdxRadiusX2Search, pointRadiusSquaredDistanceX2);
+      ASLS_->kdtree_ground_->radiusSearch(pcl_now, 2 * a_star_search_radius_, pointIdxRadiusX2Search, pointRadiusSquaredDistanceX2);
       pointIdxRadiusSearch = pointIdxRadiusX2Search;
+    }
+
+    std::vector<int> filtered_indices;
+    filtered_indices.reserve(pointIdxRadiusSearch.size());
+    for(const int candidate_index : pointIdxRadiusSearch){
+      if(candidate_index == static_cast<int>(current_node.self_index)){
+        continue;
+      }
+      const auto& candidate = pc_original_z_up_->points[candidate_index];
+      if(isWithinExpandingBounds(
+           pcl_now,
+           candidate,
+           a_star_expanding_x_,
+           a_star_expanding_y_,
+           a_star_expanding_z_tolerance_)){
+        filtered_indices.push_back(candidate_index);
+      }
     }
 
     //@ calculated average intensity, because we have sparse low cost orphan, and it is unlikely to have a low cost node surrounded by high cost nodes
     float avg_intensity = 0.0;
-    for(unsigned int it = 0; it!=pointIdxRadiusSearch.size(); it++){
-      avg_intensity += pc_original_z_up_->points[pointIdxRadiusSearch[it]].intensity;
+    for(const int candidate_index : filtered_indices){
+      avg_intensity += pc_original_z_up_->points[candidate_index].intensity;
     }
-    avg_intensity = avg_intensity/pointIdxRadiusSearch.size();
+    if(!filtered_indices.empty()){
+      avg_intensity = avg_intensity / filtered_indices.size();
+    }
 
-    for(unsigned int it = 0; it!=pointIdxRadiusSearch.size(); it++){
+    for(const int current_expanding_index : filtered_indices){
       
-      int current_expanding_index = pointIdxRadiusSearch[it];
-      float current_expanding_g = sqrt(pointRadiusSquaredDistance[it]);
+      pcl::PointXYZI pcl_current = pc_original_z_up_->points[current_node.self_index];
+      pcl::PointXYZI pcl_current_parent = pc_original_z_up_->points[current_node.parent_index];
+      pcl::PointXYZI pcl_expanding = pc_original_z_up_->points[current_expanding_index];
+
+      const float current_expanding_g = getPlanarDistance(pcl_current, pcl_expanding);
+      if(current_expanding_g <= 1e-4){
+        continue;
+      }
 
       //@ dGraphValue is the distance to lethal
       double dGraphValue = perception_ros_->get_min_dGraphValue(current_expanding_index);
@@ -268,10 +323,6 @@ void A_Star_on_Graph::getPath(
         //RCLCPP_DEBUG(rclcpp::get_logger("astar"), "%.2f,%.2f,%.2f, v: %.2f",pc_original_z_up_->points[(*it).first].x,pc_original_z_up_->points[(*it).first].y,pc_original_z_up_->points[(*it).first].z, dGraphValue);
         continue;
       }
-
-      pcl::PointXYZI pcl_current = pc_original_z_up_->points[current_node.self_index];
-      pcl::PointXYZI pcl_current_parent = pc_original_z_up_->points[current_node.parent_index];
-      pcl::PointXYZI pcl_expanding = pc_original_z_up_->points[current_expanding_index];
 
       //@ check line-of-sight when distance is 2 times larger than inscribed_radius
       if(current_expanding_g>=2*inscribed_radius){
@@ -290,10 +341,17 @@ void A_Star_on_Graph::getPath(
       float ground_edge_weight = avg_intensity;
       float node_weight = perception_ros_->getSharedDataPtr()->sGraph_ptr_->getNodeWeight(current_expanding_index);
       float new_g = current_node.g + current_expanding_g + factor * 1.0 + node_weight + theta*turning_weight_ + ground_edge_weight;
-      float new_h = sqrt(pcl::geometry::squaredDistance(pcl_expanding, pcl_goal));
+      float new_h = getPlanarDistance(pcl_expanding, pcl_goal);
       float new_f = new_g + new_h;
 
-      Node_t new_node = {.self_index=(current_expanding_index), .g=new_g, .h=new_h, .f=new_f, .parent_index=current_node.self_index, .is_closed=false, .is_opened=true};
+      Node_t new_node = {
+        .self_index=static_cast<unsigned int>(current_expanding_index),
+        .g=new_g,
+        .h=new_h,
+        .f=new_f,
+        .parent_index=current_node.self_index,
+        .is_closed=false,
+        .is_opened=true};
 
       /*Check is in closed list*/
       if(ASLS_->isClosed(current_expanding_index))

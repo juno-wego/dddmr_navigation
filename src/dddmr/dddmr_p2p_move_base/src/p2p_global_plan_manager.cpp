@@ -83,10 +83,15 @@ void P2PGlobalPlanManager::initial(){
 }
 
 void P2PGlobalPlanManager::resume(){
-  global_path_.poses.clear();
-  is_planning_ = false;
+  invalidatePlan();
   loop_timer_->reset();
   RCLCPP_INFO(this->get_logger(), "Global plan manager is resumed");
+}
+
+void P2PGlobalPlanManager::invalidatePlan(){
+  std::unique_lock<std::mutex> lock(access_);
+  global_path_.poses.clear();
+  has_valid_plan_for_goal_ = false;
 }
 
 void P2PGlobalPlanManager::stop(){
@@ -117,10 +122,10 @@ void P2PGlobalPlanManager::queryThread(){
   if(!got_first_goal_)
     return;
 
-  // In one-shot mode, reuse the current global plan for the same goal instead
-  // of continuously resubmitting identical planning requests.
-  if (global_plan_query_frequency_ <= 0.0 &&
-      has_valid_plan_for_goal_ &&
+  // Reuse the current global plan for the same goal unless some caller
+  // explicitly invalidated it. This keeps the global path stable and avoids
+  // stacking overlapping planner requests while the local controller reacts.
+  if (has_valid_plan_for_goal_ &&
       !global_path_.poses.empty() &&
       sameGoal(goal_, planned_goal_)) {
     return;

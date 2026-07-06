@@ -169,13 +169,6 @@ class ImageProjection : public rclcpp::Node
     double ground_negative_start_;
     double ground_negative_stop_;
 
-    double ignore_fov_bottom_;
-    double ignore_fov_top_;
-    double ignore_positive_start_;
-    double ignore_positive_stop_;
-    double ignore_negative_start_;
-    double ignore_negative_stop_;
-
     bool use_sensor_height_to_filter_out_ground_;
     bool unorganized_cloud_mode_;
     int unorganized_ground_ring_count_;

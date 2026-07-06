@@ -30,6 +30,28 @@
 */
 #include <global_planner/a_star_on_pre_graph.h>
 
+namespace
+{
+
+double getPlanarDistance(const pcl::PointXYZI& a, const pcl::PointXYZI& b)
+{
+  return std::hypot(a.x - b.x, a.y - b.y);
+}
+
+bool isWithinExpandingBounds(
+  const pcl::PointXYZI& current,
+  const pcl::PointXYZI& candidate,
+  double expanding_x,
+  double expanding_y,
+  double expanding_z_tolerance)
+{
+  return std::fabs(candidate.x - current.x) <= expanding_x &&
+         std::fabs(candidate.y - current.y) <= expanding_y &&
+         std::fabs(candidate.z - current.z) <= expanding_z_tolerance;
+}
+
+}  // namespace
+
 AstarListPreGraph::AstarListPreGraph(perception_3d::StaticGraph& static_graph){
   static_graph_ = static_graph;
 }
@@ -108,10 +130,14 @@ bool AstarListPreGraph::isFrontierEmpty(){
 A_Star_on_PreGraph::A_Star_on_PreGraph(pcl::PointCloud<pcl::PointXYZI>::Ptr pc_original_z_up, 
                                   perception_3d::StaticGraph& static_graph, 
                                   std::shared_ptr<perception_3d::Perception3D_ROS> perception_ros,
-                                  double a_star_expanding_radius){
+                                  double a_star_expanding_x,
+                                  double a_star_expanding_y,
+                                  double a_star_expanding_z_tolerance){
   static_graph_ = static_graph;
   perception_ros_ = perception_ros;
-  a_star_expanding_radius_ = a_star_expanding_radius;
+  a_star_expanding_x_ = a_star_expanding_x;
+  a_star_expanding_y_ = a_star_expanding_y;
+  a_star_expanding_z_tolerance_ = a_star_expanding_z_tolerance;
   pc_original_z_up_ = pc_original_z_up;
   ASLS_ = new AstarListPreGraph(static_graph_);
 }
@@ -200,7 +226,7 @@ void A_Star_on_PreGraph::getPath(
 
   pcl::PointXYZI pcl_goal = pc_original_z_up_->points[goal];
   pcl::PointXYZI pcl_start = pc_original_z_up_->points[start];
-  float f = sqrt(pcl::geometry::squaredDistance(pcl_start, pcl_goal));
+  float f = getPlanarDistance(pcl_start, pcl_goal);
   NodePreGraph_t current_node = {.self_index=start, .g=0, .h=0, .f=f, .parent_index=start, .is_closed=false, .is_opened=true};
 
   ASLS_->Initial();
@@ -218,10 +244,24 @@ void A_Star_on_PreGraph::getPath(
     auto successors = static_graph_.getEdge(current_node.self_index);
     
     for(auto it = successors.begin(); it!=successors.end(); it++){
-      
-      if((*it).second>a_star_expanding_radius_){
+      pcl::PointXYZI pcl_current = pc_original_z_up_->points[current_node.self_index];
+      pcl::PointXYZI pcl_current_parent = pc_original_z_up_->points[current_node.parent_index];
+      pcl::PointXYZI pcl_expanding = pc_original_z_up_->points[(*it).first];
+
+      if(!isWithinExpandingBounds(
+           pcl_current,
+           pcl_expanding,
+           a_star_expanding_x_,
+           a_star_expanding_y_,
+           a_star_expanding_z_tolerance_)){
         continue;
       }
+
+      float current_expanding_g = getPlanarDistance(pcl_current, pcl_expanding);
+      if(current_expanding_g <= 1e-4){
+        continue;
+      }
+
       //@ dGraphValue is the distance to lethal
       double dGraphValue = perception_ros_->get_min_dGraphValue((*it).first);
 
@@ -230,22 +270,16 @@ void A_Star_on_PreGraph::getPath(
         //ROS_DEBUG("%.2f,%.2f,%.2f, v: %.2f",pc_original_z_up_->points[(*it).first].x,pc_original_z_up_->points[(*it).first].y,pc_original_z_up_->points[(*it).first].z, dGraphValue);
         continue;
       }
-      
-      float current_expanding_g = (*it).second;
-
-      pcl::PointXYZI pcl_current = pc_original_z_up_->points[current_node.self_index];
-      pcl::PointXYZI pcl_current_parent = pc_original_z_up_->points[current_node.parent_index];
-      pcl::PointXYZI pcl_expanding = pc_original_z_up_->points[(*it).first];
 
       double factor = exp(-1.0 * inflation_descending_rate * (dGraphValue - inscribed_radius));
 
       //@ get current_parent, current, expanding to compute theta od expanding
       double theta = getThetaFromParent2Expanding(pcl_current_parent, pcl_current, pcl_expanding);
 
-      float new_g = current_node.g + (*it).second + factor * 1.0 + 
+      float new_g = current_node.g + current_expanding_g + factor * 1.0 + 
                       theta*turning_weight_ + pc_original_z_up_->points[current_node.self_index].intensity;
 
-      float new_h = sqrt(pcl::geometry::squaredDistance(pcl_expanding, pcl_goal));
+      float new_h = getPlanarDistance(pcl_expanding, pcl_goal);
       float new_f = new_g + new_h;
 
       NodePreGraph_t new_node = {.self_index=((*it).first), .g=new_g, .h=new_h, .f=new_f, .parent_index=current_node.self_index, .is_closed=false, .is_opened=true};

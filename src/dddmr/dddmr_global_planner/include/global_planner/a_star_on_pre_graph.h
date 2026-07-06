@@ -96,7 +96,9 @@ class A_Star_on_PreGraph{
       A_Star_on_PreGraph(pcl::PointCloud<pcl::PointXYZI>::Ptr pc_original_z_up, 
         perception_3d::StaticGraph& static_graph,
         std::shared_ptr<perception_3d::Perception3D_ROS> perception_ros, 
-        double a_star_expanding_radius);
+        double a_star_expanding_x,
+        double a_star_expanding_y,
+        double a_star_expanding_z_tolerance);
       
       ~A_Star_on_PreGraph();
       
@@ -126,8 +128,9 @@ class A_Star_on_PreGraph{
       //@ turning weight of the node
       double turning_weight_;
 
+      double a_star_expanding_x_;
+      double a_star_expanding_y_;
+      double a_star_expanding_z_tolerance_;
+
       double getThetaFromParent2Expanding(pcl::PointXYZI m_pcl_current_parent, pcl::PointXYZI m_pcl_current, pcl::PointXYZI m_pcl_expanding);
-
-      double a_star_expanding_radius_;
 };
-

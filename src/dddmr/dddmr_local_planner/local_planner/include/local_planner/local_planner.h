@@ -71,6 +71,7 @@ class Local_Planner : public rclcpp::Node {
       ~Local_Planner();
 
       void setPlan(const std::vector<geometry_msgs::msg::PoseStamped>& orig_global_plan);
+      void setGoalPose(const geometry_msgs::msg::PoseStamped& goal_pose);
       dddmr_sys_core::PlannerState computeVelocityCommand(std::string traj_gen_name, base_trajectory::Trajectory& best_traj);
       dddmr_sys_core::PlannerState computeVelocityCommandMPPI(base_trajectory::Trajectory& best_traj);
       void getBestTrajectory(std::string traj_gen_name, base_trajectory::Trajectory& best_traj);
@@ -154,6 +155,7 @@ class Local_Planner : public rclcpp::Node {
       void prunePlan(double forward_distance, double backward_distance);
       double getDistanceBTWPoseStamp(const geometry_msgs::msg::PoseStamped& a, const geometry_msgs::msg::PoseStamped& b);
       bool getLookaheadTarget(double lookahead_distance, geometry_msgs::msg::PoseStamped& target_pose, double& target_yaw);
+      double getGoalPlanarDistance() const;
       base_trajectory::Trajectory rolloutMPPI(
         const std::vector<double>& vx_sequence,
         const std::vector<double>& wz_sequence,
@@ -166,7 +168,8 @@ class Local_Planner : public rclcpp::Node {
         const pcl::KdTreeFLANN<pcl::PointXYZI>& obstacle_kdtree,
         bool has_obstacles,
         const geometry_msgs::msg::PoseStamped& target_pose,
-        double target_yaw) const;
+        double target_yaw,
+        bool near_goal_control) const;
       pcl::PointCloud<pcl::PointXYZ> buildCuboidForPose(const geometry_msgs::msg::PoseStamped& pose) const;
       base_trajectory::cuboid_min_max_t getCuboidMinMax(
         const pcl::PointCloud<pcl::PointXYZ>& cuboid) const;
@@ -222,6 +225,8 @@ class Local_Planner : public rclcpp::Node {
       std::shared_ptr<std::vector<base_trajectory::Trajectory>> trajectories_;
       nav_msgs::msg::Path prune_plan_;
       pcl::PointCloud<pcl::PointXYZI> pcl_prune_plan_; //@ will be copied to perception_ros, so do not use shared_ptr
+      geometry_msgs::msg::PoseStamped goal_pose_;
+      bool has_goal_pose_{false};
       std::string name_;
       
 };

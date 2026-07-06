@@ -180,31 +180,6 @@ ImageProjection::ImageProjection(std::string name, Channel<ProjectionOut>& outpu
   this->get_parameter("imageProjection.ground_negative_stop", ground_negative_stop_);
   RCLCPP_INFO(this->get_logger(), "imageProjection.ground_negative_stop: %.6f", ground_negative_stop_);
   
-  //@ ignore this region
-  declare_parameter("imageProjection.ignore_fov_bottom", rclcpp::ParameterValue(0.0));
-  this->get_parameter("imageProjection.ignore_fov_bottom", ignore_fov_bottom_);
-  RCLCPP_INFO(this->get_logger(), "imageProjection.ignore_fov_bottom: %.6f", ignore_fov_bottom_);
-
-  declare_parameter("imageProjection.ignore_fov_top", rclcpp::ParameterValue(0.0));
-  this->get_parameter("imageProjection.ignore_fov_top", ignore_fov_top_);
-  RCLCPP_INFO(this->get_logger(), "imageProjection.ignore_fov_top: %.6f", ignore_fov_top_);
-
-  declare_parameter("imageProjection.ignore_positive_start", rclcpp::ParameterValue(0.0));
-  this->get_parameter("imageProjection.ignore_positive_start", ignore_positive_start_);
-  RCLCPP_INFO(this->get_logger(), "imageProjection.ignore_positive_start: %.6f", ignore_positive_start_);
-
-  declare_parameter("imageProjection.ignore_positive_stop", rclcpp::ParameterValue(0.0));
-  this->get_parameter("imageProjection.ignore_positive_stop", ignore_positive_stop_);
-  RCLCPP_INFO(this->get_logger(), "imageProjection.ignore_positive_stop: %.6f", ignore_positive_stop_);
-
-  declare_parameter("imageProjection.ignore_negative_start", rclcpp::ParameterValue(0.0));
-  this->get_parameter("imageProjection.ignore_negative_start", ignore_negative_start_);
-  RCLCPP_INFO(this->get_logger(), "imageProjection.ignore_negative_start: %.6f", ignore_negative_start_);
-
-  declare_parameter("imageProjection.ignore_negative_stop", rclcpp::ParameterValue(0.0));
-  this->get_parameter("imageProjection.ignore_negative_stop", ignore_negative_stop_);
-  RCLCPP_INFO(this->get_logger(), "imageProjection.ignore_negative_stop: %.6f", ignore_negative_stop_);
-
   declare_parameter("imageProjection.ground_slope_tolerance", rclcpp::ParameterValue(0.174533));
   this->get_parameter("imageProjection.ground_slope_tolerance", ground_slope_tolerance_);
   RCLCPP_INFO(this->get_logger(), "imageProjection.ground_slope_tolerance: %.6f", ground_slope_tolerance_);
@@ -953,29 +928,6 @@ void ImageProjection::zPitchRollFeatureRemoval() {
         continue;
       }
 
-      //@ if the point should be ignore, i.e. lidar see the robot body itself
-      
-      double current_i_angle = i * _ang_resolution_Y - _ang_bottom; //_ang_bottom has beedn changed sign at begining
-      double current_iplus1_angle = (i+1) * _ang_resolution_Y - _ang_bottom;
-      double current_j_angle = -1.0*((j - _horizontal_scans * 0.5) * _ang_resolution_X);
-
-      if(current_i_angle>=ignore_fov_bottom_ && current_i_angle<=ignore_fov_top_ &&
-         current_iplus1_angle>=ignore_fov_bottom_ && current_iplus1_angle<=ignore_fov_top_){
-
-        if(current_j_angle>=0){
-          if(current_j_angle>=ignore_positive_start_ && current_j_angle<=ignore_positive_stop_){
-            _ground_mat(i, j) = -1;
-            continue;
-          }
-        }
-        else{
-          if(current_j_angle<=ignore_negative_start_ && current_j_angle>=ignore_negative_stop_){
-            _ground_mat(i, j) = -1;
-            continue;
-          } 
-        }
-      }
-
       float dX =
           _full_cloud->points[upperInd].x - _full_cloud->points[lowerInd].x;
       float dY =
@@ -996,6 +948,10 @@ void ImageProjection::zPitchRollFeatureRemoval() {
         _label_mat(i, j) = -1;
         _label_mat(i+1, j) = -1;
       }
+
+      double current_i_angle = i * _ang_resolution_Y - _ang_bottom;
+      double current_iplus1_angle = (i + 1) * _ang_resolution_Y - _ang_bottom;
+      double current_j_angle = -1.0 * ((j - _horizontal_scans * 0.5) * _ang_resolution_X);
 
       //@ 1. check upper and lower are in ground FOV
       //@ 2. check two point slope is less than some reasonable value

@@ -89,14 +89,6 @@ public:
             this->declare_parameter<double>("lidar_transform_pitch", 0.0);
         const double lidar_transform_yaw =
             this->declare_parameter<double>("lidar_transform_yaw", 0.0);
-        lidar_exclusion_radius_ =
-            this->declare_parameter<double>("lidar_exclusion_radius", 0.6);
-        lidar_exclusion_z_min_ =
-            this->declare_parameter<double>(
-                "lidar_exclusion_z_min", -std::numeric_limits<double>::infinity());
-        lidar_exclusion_z_max_ =
-            this->declare_parameter<double>(
-                "lidar_exclusion_z_max", std::numeric_limits<double>::infinity());
         allow_lateral_motion_ =
             this->declare_parameter<bool>("allow_lateral_motion", false);
         tf2::Quaternion lidar_transform_quat;
@@ -277,9 +269,6 @@ private:
     std::string lidar_frame_id_;
     tf2::Transform lidar_output_transform_;
     bool transform_lidar_points_{false};
-    double lidar_exclusion_radius_{0.6};
-    double lidar_exclusion_z_min_{-std::numeric_limits<double>::infinity()};
-    double lidar_exclusion_z_max_{std::numeric_limits<double>::infinity()};
     bool allow_lateral_motion_{false};
 
     // the variable for the communication check
@@ -437,45 +426,6 @@ private:
                 *iter_y = static_cast<float>(point.y());
                 *iter_z = static_cast<float>(point.z());
             }
-        }
-
-        if (lidar_exclusion_radius_ > 0.0) {
-            const double exclusion_radius_sq = lidar_exclusion_radius_ * lidar_exclusion_radius_;
-            sensor_msgs::PointCloud2ConstIterator<float> iter_x(ros_msg, "x");
-            sensor_msgs::PointCloud2ConstIterator<float> iter_y(ros_msg, "y");
-            sensor_msgs::PointCloud2ConstIterator<float> iter_z(ros_msg, "z");
-
-            std::vector<uint8_t> filtered_data;
-            filtered_data.reserve(ros_msg.data.size());
-
-            size_t point_index = 0;
-            size_t kept_points = 0;
-            for (; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z, ++point_index) {
-                const double x = static_cast<double>(*iter_x);
-                const double y = static_cast<double>(*iter_y);
-                const double z = static_cast<double>(*iter_z);
-                const double xy_radius_sq = x * x + y * y;
-                const bool inside_exclusion_radius = xy_radius_sq <= exclusion_radius_sq;
-                const bool inside_exclusion_height =
-                    z >= lidar_exclusion_z_min_ && z <= lidar_exclusion_z_max_;
-
-                if (inside_exclusion_radius && inside_exclusion_height) {
-                    continue;
-                }
-
-                const size_t byte_offset = point_index * ros_msg.point_step;
-                filtered_data.insert(
-                    filtered_data.end(),
-                    ros_msg.data.begin() + byte_offset,
-                    ros_msg.data.begin() + byte_offset + ros_msg.point_step);
-                ++kept_points;
-            }
-
-            ros_msg.data = std::move(filtered_data);
-            ros_msg.width = static_cast<uint32_t>(kept_points);
-            ros_msg.height = kept_points > 0 ? 1u : 0u;
-            ros_msg.row_step = ros_msg.point_step * ros_msg.width;
-            ros_msg.is_dense = false;
         }
 
         this->lidar_pub_->publish(ros_msg);

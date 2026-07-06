@@ -94,6 +94,7 @@ public:
 
   void initial();
   void setGoal(const geometry_msgs::msg::PoseStamped& goal);
+  void invalidatePlan();
   void resume();
   void stop();
   bool hasPlan();

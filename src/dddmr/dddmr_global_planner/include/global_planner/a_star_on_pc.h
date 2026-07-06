@@ -93,7 +93,9 @@ class A_Star_on_Graph{
     public:
       A_Star_on_Graph(pcl::PointCloud<pcl::PointXYZI>::Ptr pc_original_z_up, 
         std::shared_ptr<perception_3d::Perception3D_ROS> perception_ros,
-        double a_star_expanding_radius);
+        double a_star_expanding_x,
+        double a_star_expanding_y,
+        double a_star_expanding_z_tolerance);
       
       ~A_Star_on_Graph();
       
@@ -119,12 +121,14 @@ class A_Star_on_Graph{
       //@ turning weight of the node
       double turning_weight_;
       
-      //@ neighborhodd expanding radius
-      double a_star_expanding_radius_;
+      //@ neighborhood expanding bounds in XY and allowed step height in Z
+      double a_star_expanding_x_;
+      double a_star_expanding_y_;
+      double a_star_expanding_z_tolerance_;
+      double a_star_search_radius_;
 
       double getThetaFromParent2Expanding(pcl::PointXYZI m_pcl_current_parent, pcl::PointXYZI m_pcl_current, pcl::PointXYZI m_pcl_expanding);
       double getPitchFromParent2Expanding(pcl::PointXYZI m_pcl_current_parent, pcl::PointXYZI m_pcl_current, pcl::PointXYZI m_pcl_expanding);
 
       bool isLineOfSightClear(pcl::PointXYZI& pcl_current, pcl::PointXYZI& pcl_expanding, double inscribed_radius);
 };
-

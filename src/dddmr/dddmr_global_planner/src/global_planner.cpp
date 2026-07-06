@@ -29,6 +29,7 @@
 * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 #include <global_planner/global_planner.h>
+#include <algorithm>
 
 using namespace std::chrono_literals;
 
@@ -166,6 +167,18 @@ void GlobalPlanner::initial(const std::shared_ptr<perception_3d::Perception3D_RO
   declare_parameter("a_star_expanding_radius", rclcpp::ParameterValue(0.5));
   this->get_parameter("a_star_expanding_radius", a_star_expanding_radius_);
   RCLCPP_INFO(this->get_logger(), "a_star_expanding_radius: %.2f", a_star_expanding_radius_);    
+
+  declare_parameter("a_star_expanding_x", rclcpp::ParameterValue(a_star_expanding_radius_));
+  this->get_parameter("a_star_expanding_x", a_star_expanding_x_);
+  RCLCPP_INFO(this->get_logger(), "a_star_expanding_x: %.2f", a_star_expanding_x_);
+
+  declare_parameter("a_star_expanding_y", rclcpp::ParameterValue(a_star_expanding_radius_));
+  this->get_parameter("a_star_expanding_y", a_star_expanding_y_);
+  RCLCPP_INFO(this->get_logger(), "a_star_expanding_y: %.2f", a_star_expanding_y_);
+
+  declare_parameter("a_star_expanding_z_tolerance", rclcpp::ParameterValue(0.5));
+  this->get_parameter("a_star_expanding_z_tolerance", a_star_expanding_z_tolerance_);
+  RCLCPP_INFO(this->get_logger(), "a_star_expanding_z_tolerance: %.2f", a_star_expanding_z_tolerance_);
 
   declare_parameter("use_pre_graph", rclcpp::ParameterValue(false));
   this->get_parameter("use_pre_graph", use_pre_graph_);
@@ -670,20 +683,36 @@ void GlobalPlanner::getStaticGraphFromPerception3D(){
   
   if(!has_initialized_){
     has_initialized_ = true;
-    if(a_star_expanding_radius_ >= perception_3d_ros_->getGlobalUtils()->getInscribedRadius()*2){
-      RCLCPP_WARN(this->get_logger(), "Expanding radius is much larger than InscribedRadius, the planning time will be increased.");
+    if(std::max(a_star_expanding_x_, a_star_expanding_y_) >= perception_3d_ros_->getGlobalUtils()->getInscribedRadius()*2){
+      RCLCPP_WARN(this->get_logger(), "Expanding XY bound is much larger than InscribedRadius, the planning time will be increased.");
     }
     if(!use_pre_graph_){
-      a_star_planner_ = std::make_shared<A_Star_on_Graph>(pcl_ground_, perception_3d_ros_, a_star_expanding_radius_);
+      a_star_planner_ = std::make_shared<A_Star_on_Graph>(
+        pcl_ground_,
+        perception_3d_ros_,
+        a_star_expanding_x_,
+        a_star_expanding_y_,
+        a_star_expanding_z_tolerance_);
       a_star_planner_->setupTurningWeight(turning_weight_);
     }
     else{
-      a_star_planner_pre_graph_ = std::make_shared<A_Star_on_PreGraph>(pcl_ground_, static_graph_, perception_3d_ros_, a_star_expanding_radius_);
+      a_star_planner_pre_graph_ = std::make_shared<A_Star_on_PreGraph>(
+        pcl_ground_,
+        static_graph_,
+        perception_3d_ros_,
+        a_star_expanding_x_,
+        a_star_expanding_y_,
+        a_star_expanding_z_tolerance_);
       a_star_planner_pre_graph_->setupTurningWeight(turning_weight_);
     }
   }
   else{
-    a_star_planner_->updateGraph(pcl_ground_);
+    if(!use_pre_graph_){
+      a_star_planner_->updateGraph(pcl_ground_);
+    }
+    else{
+      a_star_planner_pre_graph_->updateGraph(pcl_ground_, static_graph_);
+    }
   }
 
   pubWeight();

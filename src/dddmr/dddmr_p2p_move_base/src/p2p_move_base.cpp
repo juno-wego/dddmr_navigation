@@ -33,6 +33,13 @@
 namespace p2p_move_base
 {
 
+bool P2PMoveBase::isCurrentGoalHandle(
+  const std::shared_ptr<rclcpp_action::ServerGoalHandle<dddmr_sys_core::action::PToPMoveBase>>& goal_handle) const
+{
+  std::lock_guard<std::mutex> lock(current_handle_mutex_);
+  return current_handle_ == goal_handle;
+}
+
 P2PMoveBase::P2PMoveBase(std::string name): Node(name)
 {
   name_ = name;
@@ -57,14 +64,20 @@ rclcpp_action::CancelResponse P2PMoveBase::handle_cancel(
 
 void P2PMoveBase::handle_accepted(const std::shared_ptr<rclcpp_action::ServerGoalHandle<dddmr_sys_core::action::PToPMoveBase>> goal_handle)
 {
+  std::shared_ptr<rclcpp_action::ServerGoalHandle<dddmr_sys_core::action::PToPMoveBase>> previous_handle;
 
-  if (is_active(current_handle_)){
+  {
+    std::lock_guard<std::mutex> lock(current_handle_mutex_);
+    previous_handle = current_handle_;
+    current_handle_ = goal_handle;
+  }
+
+  if (is_active(previous_handle)){
     RCLCPP_INFO(this->get_logger(), "An older goal is active, aborting it and accepting the new goal.");
     auto result = std::make_shared<dddmr_sys_core::action::PToPMoveBase::Result>();
-    current_handle_->abort(result);
+    previous_handle->abort(result);
   }
-  current_handle_.reset();
-  current_handle_ = goal_handle;
+
   // this needs to return quickly to avoid blocking the executor, so spin up a new thread
   std::thread{std::bind(&P2PMoveBase::executeCb, this, std::placeholders::_1), goal_handle}.detach();
 }
@@ -216,12 +229,17 @@ void P2PMoveBase::executeCb(const std::shared_ptr<rclcpp_action::ServerGoalHandl
   STATE_->initialParams(LP_->getGlobalPose(), clock_->now());
   rotate_for_heading_during_control_ = false;
   STATE_->current_goal_ = move_base_goal->target_pose;
+  LP_->setGoalPose(STATE_->current_goal_);
   GPM_->setGoal(STATE_->current_goal_);
   GPM_->resume();
 
   while(rclcpp::ok()){
 
     if(!goal_handle->is_active()){
+      if(!isCurrentGoalHandle(goal_handle)){
+        RCLCPP_INFO(this->get_logger(), "P2P move base thread for an older goal is exiting after preemption.");
+        return;
+      }
       
       if(STATE_->isCurrentDecision("d_recovery_waitdone")){
         RCLCPP_INFO(this->get_logger(), "P2P is in recovery state, cancel recovery behaviors.");
@@ -235,6 +253,10 @@ void P2PMoveBase::executeCb(const std::shared_ptr<rclcpp_action::ServerGoalHandl
     }
 
     if(goal_handle->is_canceling()){
+      if(!isCurrentGoalHandle(goal_handle)){
+        RCLCPP_INFO(this->get_logger(), "Cancellation received for a superseded goal thread.");
+        return;
+      }
 
       if(STATE_->isCurrentDecision("d_recovery_waitdone")){
         RCLCPP_INFO(this->get_logger(), "P2P is in recovery state, cancel recovery behaviors.");
@@ -259,7 +281,9 @@ void P2PMoveBase::executeCb(const std::shared_ptr<rclcpp_action::ServerGoalHandl
 
     //if we're done, then we'll return from execute
     if(done){
-      GPM_->stop();
+      if(isCurrentGoalHandle(goal_handle)){
+        GPM_->stop();
+      }
       return;
     }
     
@@ -268,7 +292,9 @@ void P2PMoveBase::executeCb(const std::shared_ptr<rclcpp_action::ServerGoalHandl
     //if(STATE_->isCurrentDecision("d_controlling") && r.cycleTime() > ros::Duration(1 / STATE_->controller_frequency_))
     //  ROS_WARN("Control loop missed its desired rate of %.4fHz... the loop actually took %.4f seconds", STATE_->controller_frequency_, r.cycleTime().toSec());
   }
-  GPM_->stop();
+  if(isCurrentGoalHandle(goal_handle)){
+    GPM_->stop();
+  }
 }
 
 bool P2PMoveBase::executeCycle(const std::shared_ptr<rclcpp_action::ServerGoalHandle<dddmr_sys_core::action::PToPMoveBase>> goal_handle){
@@ -289,6 +315,13 @@ bool P2PMoveBase::executeCycle(const std::shared_ptr<rclcpp_action::ServerGoalHa
         return LP_->computeVelocityCommandMPPI(best_traj);
       }
       return LP_->computeVelocityCommand(controller_name, best_traj);
+    };
+
+    auto request_replan = [&]()
+    {
+      GPM_->invalidatePlan();
+      STATE_->last_valid_plan_ = clock_->now();
+      STATE_->setDecision("d_planning");
     };
 
 
@@ -375,10 +408,8 @@ bool P2PMoveBase::executeCycle(const std::shared_ptr<rclcpp_action::ServerGoalHa
           return false;
         }
         else if(PS == dddmr_sys_core::PlannerState::PRUNE_PLAN_FAIL){
-          //@ this assignment will allow at least one time planning query
-          STATE_->last_valid_plan_ = clock_->now();
           publishZeroVelocity();
-          STATE_->setDecision("d_planning");  
+          request_replan();
           return false;
         }
         else if(PS == dddmr_sys_core::PlannerState::ALL_TRAJECTORIES_FAIL){
@@ -390,16 +421,14 @@ bool P2PMoveBase::executeCycle(const std::shared_ptr<rclcpp_action::ServerGoalHa
             STATE_->setDecision("d_recovery_waitdone");
           }
           else{
-            STATE_->last_valid_plan_ = clock_->now();
-            STATE_->setDecision("d_planning");  
+            request_replan();
           }
           publishZeroVelocity();
           return false;
         }
 
         else if(PS == dddmr_sys_core::PlannerState::PATH_BLOCKED_WAIT || PS == dddmr_sys_core::PlannerState::PATH_BLOCKED_REPLANNING){
-          STATE_->last_valid_plan_ = clock_->now();
-          STATE_->setDecision("d_planning");
+          request_replan();
           publishZeroVelocity();
           return false;
         }
@@ -414,6 +443,16 @@ bool P2PMoveBase::executeCycle(const std::shared_ptr<rclcpp_action::ServerGoalHa
     }
 
     else if(STATE_->isCurrentDecision("d_align_goal_heading")){
+      if(!LP_->isGoalReached()){
+        RCLCPP_WARN_THROTTLE(
+          this->get_logger(),
+          *clock_,
+          2000,
+          "Robot drifted outside goal XY tolerance during final yaw alignment. Returning to path tracking.");
+        STATE_->setDecision("d_controlling");
+        return false;
+      }
+
       if(LP_->isGoalHeadingAligned()){
         RCLCPP_INFO(this->get_logger(), "Goal reach.");
         auto result = std::make_shared<dddmr_sys_core::action::PToPMoveBase::Result>();
@@ -457,10 +496,8 @@ bool P2PMoveBase::executeCycle(const std::shared_ptr<rclcpp_action::ServerGoalHa
           return false;
         }
         else if(PS == dddmr_sys_core::PlannerState::PRUNE_PLAN_FAIL){
-          //@ this assignment will allow at least one time planning query
-          STATE_->last_valid_plan_ = clock_->now();
           publishZeroVelocity();
-          STATE_->setDecision("d_planning");  
+          request_replan();
           return false;
         }
         else if(PS == dddmr_sys_core::PlannerState::ALL_TRAJECTORIES_FAIL ||
@@ -488,20 +525,38 @@ bool P2PMoveBase::executeCycle(const std::shared_ptr<rclcpp_action::ServerGoalHa
     }
 
     else if(STATE_->isCurrentDecision("d_controlling")){
+      const bool use_mppi_main_controller = STATE_->main_trajectory_generator_ == "mppi";
 
       //@Check is goal xy tolerance reach
       if(LP_->isGoalReached()){
-        publishZeroVelocity();
-        if(STATE_->use_position_control_at_goal_){
-          RCLCPP_INFO(this->get_logger(), "Goal xy tolerance reach, align the goal with position control.");
-          startRecoveryBehaviors("position_control");
-          STATE_->setDecision("d_recovery_position_control_waitdone");  
+        if(use_mppi_main_controller && !STATE_->use_position_control_at_goal_){
+          if(LP_->isGoalHeadingAligned()){
+            RCLCPP_INFO(this->get_logger(), "Goal reach.");
+            auto result = std::make_shared<dddmr_sys_core::action::PToPMoveBase::Result>();
+            goal_handle->succeed(result);
+            publishZeroVelocity();
+            return true;
+          }
+
+          RCLCPP_INFO_THROTTLE(
+            this->get_logger(),
+            *clock_,
+            2000,
+            "Within goal XY tolerance. Keeping MPPI active to converge final yaw smoothly.");
         }
         else{
-          STATE_->setDecision("d_align_goal_heading");  
-          RCLCPP_INFO(this->get_logger(), "Goal xy tolerance reach, switch to align goal heading state.");
+          publishZeroVelocity();
+          if(STATE_->use_position_control_at_goal_){
+            RCLCPP_INFO(this->get_logger(), "Goal xy tolerance reach, align the goal with position control.");
+            startRecoveryBehaviors("position_control");
+            STATE_->setDecision("d_recovery_position_control_waitdone");  
+          }
+          else{
+            STATE_->setDecision("d_align_goal_heading");  
+            RCLCPP_INFO(this->get_logger(), "Goal xy tolerance reach, switch to align goal heading state.");
+          }
+          return false;
         }
-        return false;
       }
       
       //@ update global plan
@@ -522,7 +577,6 @@ bool P2PMoveBase::executeCycle(const std::shared_ptr<rclcpp_action::ServerGoalHa
       }
 
       base_trajectory::Trajectory best_traj;
-      const bool use_mppi_main_controller = STATE_->main_trajectory_generator_ == "mppi";
       if(use_mppi_main_controller){
         rotate_for_heading_during_control_ = false;
       }
@@ -576,10 +630,8 @@ bool P2PMoveBase::executeCycle(const std::shared_ptr<rclcpp_action::ServerGoalHa
         return false;
       }
       else if(PS == dddmr_sys_core::PlannerState::PRUNE_PLAN_FAIL){
-        //@ this assignment will allow at least one time planning query
-        STATE_->last_valid_plan_ = clock_->now();
         publishZeroVelocity();
-        STATE_->setDecision("d_planning");  
+        request_replan();
         return false;
       }
       else if(PS == dddmr_sys_core::PlannerState::ALL_TRAJECTORIES_FAIL){
@@ -591,17 +643,15 @@ bool P2PMoveBase::executeCycle(const std::shared_ptr<rclcpp_action::ServerGoalHa
           STATE_->setDecision("d_recovery_waitdone");
         }
         else{
-          STATE_->last_valid_plan_ = clock_->now();
-          STATE_->setDecision("d_planning");  
+          request_replan();
         }
 
         return false;
       }
 
       else if(PS == dddmr_sys_core::PlannerState::PATH_BLOCKED_REPLANNING){
-        STATE_->last_valid_plan_ = clock_->now();
         publishZeroVelocity();
-        STATE_->setDecision("d_planning"); 
+        request_replan();
         RCLCPP_WARN(this->get_logger(), "Path conflits, but no need to wait.");
        	return false;
       }
@@ -664,8 +714,7 @@ bool P2PMoveBase::executeCycle(const std::shared_ptr<rclcpp_action::ServerGoalHa
         //we go to planning and we also need to count second recovery then abort
         RCLCPP_INFO(this->get_logger(), "Recovery succeed, back to planning state.");
         STATE_->no_plan_recovery_count_++;
-        STATE_->last_valid_plan_ = clock_->now();
-        STATE_->setDecision("d_planning");
+        request_replan();
         return false;  
       }
       else{
@@ -683,8 +732,7 @@ bool P2PMoveBase::executeCycle(const std::shared_ptr<rclcpp_action::ServerGoalHa
       
       //if continue conflict over 10s,to recalculate the path
       if((clock_->now()-STATE_->waiting_time_).seconds() >= STATE_->waiting_patience_){ 
-       	STATE_->last_valid_plan_ = clock_->now();
-        STATE_->setDecision("d_planning");
+        request_replan();
         RCLCPP_WARN(this->get_logger(), "waiting time over %.2f,change to d_planning", STATE_->waiting_patience_);
         return false;
       }
@@ -722,9 +770,8 @@ bool P2PMoveBase::executeCycle(const std::shared_ptr<rclcpp_action::ServerGoalHa
       }
 
       else if(PS == dddmr_sys_core::PlannerState::PRUNE_PLAN_FAIL){
-        STATE_->last_valid_plan_ = clock_->now();
         publishZeroVelocity();
-        STATE_->setDecision("d_planning");  
+        request_replan();
         return false;
       }
 
@@ -737,8 +784,7 @@ bool P2PMoveBase::executeCycle(const std::shared_ptr<rclcpp_action::ServerGoalHa
           STATE_->setDecision("d_recovery_waitdone");
         }
         else{
-          STATE_->last_valid_plan_ = clock_->now();
-          STATE_->setDecision("d_planning");  
+          request_replan();
         }
       }
 

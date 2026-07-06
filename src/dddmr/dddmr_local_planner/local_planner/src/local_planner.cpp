@@ -43,6 +43,19 @@ std::string formatRejectedTrajectoryReport(
   const std::map<std::string, std::vector<base_trajectory::Trajectory>>& rejected_trajectories,
   std::size_t total_trajectories);
 
+bool hasValidGoalOrientation(const geometry_msgs::msg::Quaternion& orientation)
+{
+  if(!std::isfinite(orientation.x) ||
+     !std::isfinite(orientation.y) ||
+     !std::isfinite(orientation.z) ||
+     !std::isfinite(orientation.w)){
+    return false;
+  }
+
+  tf2::Quaternion q(orientation.x, orientation.y, orientation.z, orientation.w);
+  return q.length2() > 1e-6;
+}
+
 }  // namespace
 
 Local_Planner::Local_Planner(const std::string& name): Node(name)
@@ -386,13 +399,17 @@ double Local_Planner::getPathHeadingDeviation(){
 }
 
 bool Local_Planner::isGoalHeadingAligned(){
-
-  if(global_plan_.empty()){
+  if(!has_goal_pose_ && global_plan_.empty()){
     return false;
   }
 
   geometry_msgs::msg::PoseStamped final_pose;
-  final_pose = global_plan_.back();
+  if(has_goal_pose_ && hasValidGoalOrientation(goal_pose_.pose.orientation)){
+    final_pose = goal_pose_;
+  }
+  else{
+    final_pose = global_plan_.back();
+  }
 
   geometry_msgs::msg::TransformStamped final_pose_ts;
   final_pose_ts.header = final_pose.header;
@@ -419,15 +436,10 @@ bool Local_Planner::isGoalHeadingAligned(){
 }
 
 bool Local_Planner::isGoalReached(){
-  if(global_plan_.empty()){
+  const double distance = getGoalPlanarDistance();
+  if(!std::isfinite(distance)){
     return false;
   }
-  geometry_msgs::msg::PoseStamped final_pose;
-  final_pose = global_plan_.back();
-  double dx = trans_gbl2b_.transform.translation.x - final_pose.pose.position.x;
-  double dy = trans_gbl2b_.transform.translation.y - final_pose.pose.position.y;
-  double dz = trans_gbl2b_.transform.translation.z - final_pose.pose.position.z;
-  double distance = sqrt(dx*dx + dy*dy + dz*dz);
   if(xy_goal_tolerance_>distance)
     return true;
   else
@@ -482,6 +494,18 @@ bool Local_Planner::getLookaheadTarget(
   geometry_msgs::msg::PoseStamped& target_pose,
   double& target_yaw)
 {
+  const double goal_distance = getGoalPlanarDistance();
+  if(has_goal_pose_ && goal_distance <= std::max(0.6, xy_goal_tolerance_ * 2.0)){
+    target_pose = goal_pose_;
+    if(hasValidGoalOrientation(goal_pose_.pose.orientation)){
+      tf2::Quaternion q;
+      tf2::convert(goal_pose_.pose.orientation, q);
+      double roll, pitch;
+      tf2::Matrix3x3(q).getRPY(roll, pitch, target_yaw);
+      return true;
+    }
+  }
+
   if(prune_plan_.poses.size() < 2){
     return false;
   }
@@ -523,6 +547,24 @@ bool Local_Planner::getLookaheadTarget(
   double roll, pitch;
   tf2::Matrix3x3(q).getRPY(roll, pitch, target_yaw);
   return true;
+}
+
+double Local_Planner::getGoalPlanarDistance() const
+{
+  geometry_msgs::msg::PoseStamped final_pose;
+  if(has_goal_pose_){
+    final_pose = goal_pose_;
+  }
+  else if(!global_plan_.empty()){
+    final_pose = global_plan_.back();
+  }
+  else{
+    return std::numeric_limits<double>::infinity();
+  }
+
+  const double dx = trans_gbl2b_.transform.translation.x - final_pose.pose.position.x;
+  const double dy = trans_gbl2b_.transform.translation.y - final_pose.pose.position.y;
+  return std::hypot(dx, dy);
 }
 
 pcl::PointCloud<pcl::PointXYZ> Local_Planner::buildCuboidForPose(
@@ -617,7 +659,8 @@ double Local_Planner::scoreMPPI(
   const pcl::KdTreeFLANN<pcl::PointXYZI>& obstacle_kdtree,
   bool has_obstacles,
   const geometry_msgs::msg::PoseStamped& target_pose,
-  double target_yaw) const
+  double target_yaw,
+  bool near_goal_control) const
 {
   if(traj.getPointsSize() == 0){
     return std::numeric_limits<double>::infinity();
@@ -681,14 +724,23 @@ double Local_Planner::scoreMPPI(
   tf2::Matrix3x3(terminal_quat).getRPY(terminal_roll, terminal_pitch, terminal_yaw);
   const double heading_cost = std::fabs(angles::shortest_angular_distance(terminal_yaw, target_yaw));
 
+  const double effective_path_weight =
+    near_goal_control ? std::min(mppi_weight_path_, 0.35) : mppi_weight_path_;
+  const double effective_goal_weight =
+    near_goal_control ? std::max(mppi_weight_goal_, 7.0) : mppi_weight_goal_;
+  const double effective_heading_weight =
+    near_goal_control ? std::max(mppi_weight_heading_, 1.2) : mppi_weight_heading_;
+  const double effective_forward_reward =
+    near_goal_control ? 0.0 : mppi_forward_reward_;
+
   return
-    mppi_weight_path_ * path_cost +
-    mppi_weight_goal_ * goal_cost +
-    mppi_weight_heading_ * heading_cost +
+    effective_path_weight * path_cost +
+    effective_goal_weight * goal_cost +
+    effective_heading_weight * heading_cost +
     mppi_weight_obstacle_ * obstacle_cost +
     mppi_weight_smooth_ * smooth_cost +
     mppi_weight_effort_ * effort_cost -
-    mppi_forward_reward_ * forward_progress;
+    effective_forward_reward * forward_progress;
 }
 
 dddmr_sys_core::PlannerState Local_Planner::computeVelocityCommandMPPI(
@@ -772,14 +824,18 @@ dddmr_sys_core::PlannerState Local_Planner::computeVelocityCommandMPPI(
     allowed_max_linear_speed > 0.0 ?
     std::min(mppi_max_vel_x_, allowed_max_linear_speed) :
     mppi_max_vel_x_;
+  const bool near_goal_control =
+    getGoalPlanarDistance() <= std::max(0.6, xy_goal_tolerance_ * 2.0);
+  const double effective_max_linear_speed =
+    near_goal_control ? std::min(max_linear_speed, 0.12) : max_linear_speed;
 
-  if(max_linear_speed <= 1e-3 || mppi_horizon_steps_ <= 0 || mppi_batch_size_ <= 0){
+  if(effective_max_linear_speed <= 1e-3 || mppi_horizon_steps_ <= 0 || mppi_batch_size_ <= 0){
     RCLCPP_ERROR_THROTTLE(
       this->get_logger().get_child(name_),
       *clock_,
       5000,
       "Invalid MPPI configuration. max_linear_speed=%.3f horizon=%d batch=%d",
-      max_linear_speed,
+      effective_max_linear_speed,
       mppi_horizon_steps_,
       mppi_batch_size_);
     return dddmr_sys_core::CONFIGURATION_ERROR;
@@ -840,8 +896,9 @@ dddmr_sys_core::PlannerState Local_Planner::computeVelocityCommandMPPI(
         const double desired_vx = nominal_vx[step] + sampled_noise_vx[sample_index][step];
         const double desired_wz = nominal_wz[step] + sampled_noise_wz[sample_index][step];
         const double min_linear_speed =
-          (step == 0 && std::fabs(previous_vx) < 1e-3) || std::fabs(desired_vx) < mppi_min_vel_x_ ?
-          0.0 : mppi_min_vel_x_;
+          near_goal_control ? 0.0 :
+          ((step == 0 && std::fabs(previous_vx) < 1e-3) || std::fabs(desired_vx) < mppi_min_vel_x_ ?
+          0.0 : mppi_min_vel_x_);
 
         sampled_vx[sample_index][step] = clampVelocityByAcceleration(
           desired_vx,
@@ -849,7 +906,7 @@ dddmr_sys_core::PlannerState Local_Planner::computeVelocityCommandMPPI(
           mppi_acc_lim_x_,
           mppi_dt_,
           min_linear_speed,
-          max_linear_speed);
+          effective_max_linear_speed);
         sampled_wz[sample_index][step] = clampVelocityByAcceleration(
           desired_wz,
           previous_wz,
@@ -874,7 +931,8 @@ dddmr_sys_core::PlannerState Local_Planner::computeVelocityCommandMPPI(
         obstacle_kdtree,
         has_obstacles,
         target_pose,
-        target_yaw);
+        target_yaw,
+        near_goal_control);
 
       sampled_trajs[sample_index].cost_ = std::isfinite(sample_costs[sample_index]) ?
         sample_costs[sample_index] : -1.0;
@@ -1062,6 +1120,11 @@ void Local_Planner::setPlan(const std::vector<geometry_msgs::msg::PoseStamped>& 
   RCLCPP_INFO_THROTTLE(this->get_logger().get_child(name_), *clock_, 10000, "Recieve new global plan.");
   //RCLCPP_INFO(this->get_logger().get_child(name_), "Recieve new global plan: %.2f, %.2f", 
   //    global_plan_.back().pose.position.x, global_plan_.back().pose.position.y);
+}
+
+void Local_Planner::setGoalPose(const geometry_msgs::msg::PoseStamped& goal_pose) {
+  goal_pose_ = goal_pose;
+  has_goal_pose_ = true;
 }
 
 double Local_Planner::getDistanceBTWPoseStamp(const geometry_msgs::msg::PoseStamped& a, const geometry_msgs::msg::PoseStamped& b){

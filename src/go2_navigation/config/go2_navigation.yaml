@@ -158,7 +158,7 @@ p2p_move_base:
 global_plan_manager:
   ros__parameters:
     global_planner_action_name: "get_plan" # 호출할 global planner action 이름
-    global_plan_query_frequency: -1.0       # 음수: 목표를 새로 줄 때만 전역 경로 생성. 주행 중 잦은 재계획 방지
+    global_plan_query_frequency: -1.0       # 같은 goal에서는 global path를 유지하고, blocked/실패 시에만 상위 상태기가 강제로 재계획
 
 # ── Local planner ───────────────────────────────────────────────────────
 local_planner:
@@ -171,7 +171,7 @@ local_planner:
     prune_plan_max_deviation: 2.0          # global path에서 조금 벗어나도 prune/local tracking을 계속 허용
     prune_plane_timeout: 3.0               # 오래된 prune plan에 끌려가지 않도록 유지 시간 단축
     xy_goal_tolerance: 0.35                # goal 판정을 더 타이트하게 해서 중간에 느슨하게 끝나지 않게 함 [m]
-    yaw_goal_tolerance: 0.52               # goal yaw 허용 오차 약 30 deg
+    yaw_goal_tolerance: 0.20               # goal yaw 허용 오차를 약 11 deg로 줄여 최종 헤딩을 더 정확히 맞춤
     controller_frequency: 15.0             # MPPI 계산 여유를 유지하면서 충분한 추종 주기 확보 [Hz]
     mppi:
       batch_size: 320                      # 후보를 조금 더 넓게 보고 덜 들쭉날쭉한 제어 선택
@@ -428,7 +428,10 @@ perception_3d_global:
 global_planner:
   ros__parameters:
     turning_weight: 0.1                     # 경로 비용에서 회전/방향 전환에 부과하는 가중치
-    a_star_expanding_radius: 0.8            # ground graph 이웃 탐색 반경. 지면 z 변화/희소 point로 인한 불필요한 우회 완화 [m]
+    a_star_expanding_radius: 0.4            # 하위 호환용 기본값. 실제 이웃 확장은 x/y/z_tol 파라미터를 우선 사용
+    a_star_expanding_x: 0.4                 # 현재 graph node에서 다음 node 후보를 찾을 x 허용 범위 [m]
+    a_star_expanding_y: 0.4                 # 현재 graph node에서 다음 node 후보를 찾을 y 허용 범위 [m]
+    a_star_expanding_z_tolerance: 0.5       # 현재 graph node와 다음 node의 높이 차 허용치 |dz| [m]
     enable_detail_log: false                # true일 때 planner 내부 상세 디버그 log 출력
     find_start_tolerance: 1.0               # 시작 위치 snap 허용 반경을 줄여 이상한 우회 시작 방지 [m]
 

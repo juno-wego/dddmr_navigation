@@ -129,6 +129,9 @@ class GlobalPlanner : public rclcpp::Node {
       double turning_weight_;
       bool enable_detail_log_;
       double a_star_expanding_radius_;
+      double a_star_expanding_x_;
+      double a_star_expanding_y_;
+      double a_star_expanding_z_tolerance_;
       size_t static_ground_size_;
       bool use_pre_graph_;
       double find_start_tolerance_;

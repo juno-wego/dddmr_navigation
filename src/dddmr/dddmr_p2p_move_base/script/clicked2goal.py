@@ -6,6 +6,7 @@ from rclpy.node import Node
 
 from dddmr_sys_core.action import PToPMoveBase
 from geometry_msgs.msg import PointStamped, PoseStamped
+from action_msgs.msg import GoalStatus
 
 
 class GoalRelay(Node):
@@ -16,6 +17,8 @@ class GoalRelay(Node):
         self.global_frame = self.get_parameter("global_frame").get_parameter_value().string_value
 
         self._action_client = ActionClient(self, PToPMoveBase, "/p2p_move_base")
+        self._request_seq = 0
+        self._latest_request_seq = 0
         self._goal_pose_sub = self.create_subscription(
             PoseStamped, "goal_pose_3d", self.goal_cb, 10)
         self._clicked_point_sub = self.create_subscription(
@@ -72,10 +75,18 @@ class GoalRelay(Node):
         goal = PToPMoveBase.Goal()
         goal.target_pose = pose
         self.get_logger().info("Sending goal to /p2p_move_base")
+        self._request_seq += 1
+        request_seq = self._request_seq
+        self._latest_request_seq = request_seq
         send_goal_future = self._action_client.send_goal_async(goal)
-        send_goal_future.add_done_callback(self.goal_response_callback)
+        send_goal_future.add_done_callback(
+            lambda future, seq=request_seq: self.goal_response_callback(future, seq))
 
-    def goal_response_callback(self, future):
+    def goal_response_callback(self, future, request_seq):
+        if request_seq != self._latest_request_seq:
+            self.get_logger().info(
+                "Ignoring goal response for superseded request #%d" % request_seq)
+            return
         goal_handle = future.result()
         if goal_handle is None or not goal_handle.accepted:
             self.get_logger().warn("Goal rejected")
@@ -83,14 +94,21 @@ class GoalRelay(Node):
 
         self.get_logger().info("Goal accepted")
         result_future = goal_handle.get_result_async()
-        result_future.add_done_callback(self.goal_result_callback)
+        result_future.add_done_callback(
+            lambda future, seq=request_seq: self.goal_result_callback(future, seq))
 
-    def goal_result_callback(self, future):
+    def goal_result_callback(self, future, request_seq):
+        if request_seq != self._latest_request_seq:
+            self.get_logger().info(
+                "Ignoring goal result for superseded request #%d" % request_seq)
+            return
         result = future.result()
         if result is None:
             self.get_logger().warn("Goal result is empty")
             return
         self.get_logger().info("Goal finished with status %d" % result.status)
+        if result.status == GoalStatus.STATUS_ABORTED:
+            self.get_logger().warn("Latest goal was aborted before navigation completed")
 
 
 def main(args=None):
